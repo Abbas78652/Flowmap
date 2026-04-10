@@ -108,7 +108,7 @@ export const useStore = create((set, get) => ({
         body: JSON.stringify({ flow }),
       });
 
-      const data = await res.json();
+      await res.json();
 
       if (!res.ok || !data.success) {
         set({ activating: null });
