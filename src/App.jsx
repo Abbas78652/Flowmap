@@ -1,0 +1,135 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+// src/App.jsx
+
+import React, { useEffect, useCallback } from 'react';
+import toast, { Toaster } from 'react-hot-toast';
+
+import LoginScreen from './components/LoginScreen';
+import Header      from './components/Header';
+import Sidebar     from './components/Sidebar';
+import FlowCanvas  from './components/FlowCanvas';
+
+import { getCurrentUser, getBoards } from './api/monday';
+import { serializeFlowForAI }        from './utils/flowBuilder';
+import { useStore }                  from './utils/store';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
+
+export default function App() {
+  const token          = useStore(s => s.token);
+  const setToken       = useStore(s => s.setToken);
+  const setUser        = useStore(s => s.setUser);
+  const setBoards      = useStore(s => s.setBoards);
+  const nodes          = useStore(s => s.nodes);
+  const edges          = useStore(s => s.edges);
+  const currentFlow    = useStore(s => s.currentFlowName);
+  const setAuditResult = useStore(s => s.setAuditResult);
+  const setAuditLoading= useStore(s => s.setAuditLoading);
+  const setActivePanel = useStore(s => s.setActivePanel);
+
+  // ── Parse token from URL after OAuth ──
+  useEffect(() => {
+    const params   = new URLSearchParams(window.location.search);
+    const urlToken = params.get('token');
+    if (urlToken) {
+      setToken(urlToken);
+      window.history.replaceState({}, '', window.location.pathname);
+    } else {
+      const stored = localStorage.getItem('flowmap_token');
+      if (stored) setToken(stored);
+    }
+  }, []);
+
+  // ── Load user + boards when token arrives ──
+  useEffect(() => {
+    if (!token) return;
+    localStorage.setItem('flowmap_token', token);
+    (async () => {
+      try {
+        const [user, boards] = await Promise.all([getCurrentUser(token), getBoards(token)]);
+        setUser(user);
+        setBoards(boards);
+        toast.success(`Welcome, ${user.name}!`);
+      } catch (err) {
+        console.error(err);
+        toast.error('Could not load your monday.com data.');
+      }
+    })();
+  }, [token]);
+
+  // ── AI Audit handler ──
+  const handleAudit = useCallback(async () => {
+    if (nodes.length === 0) {
+      toast.error('Add some nodes to your flow first!');
+      return;
+    }
+
+    setAuditLoading(true);
+    setActivePanel('audit');
+
+    const flowText = serializeFlowForAI(nodes, edges, currentFlow);
+
+    const prompt = `You are an expert monday.com automation consultant. A user has built the following automation flow and wants your professional audit.
+
+${flowText}
+
+Please provide:
+
+1. ✅ WHAT'S GOOD — Strengths of this automation design (2-3 points)
+2. ⚠️ POTENTIAL ISSUES — Problems, gaps, or risks (be specific)
+3. 💡 RECOMMENDATIONS — Concrete improvements they should make
+4. 🔄 MISSING STEPS — Any triggers, conditions, or actions that are missing for this to work reliably
+5. ⭐ OVERALL SCORE — Rate this flow /10 and explain why
+
+Be specific to monday.com. Use practical, actionable language. Keep total response under 400 words.`;
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/audit`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ prompt }),
+      });
+      const data = await res.json();
+      setAuditResult(data.result || 'No response received.');
+      toast.success('AI Audit complete!');
+    } catch (err) {
+      console.error(err);
+      toast.error('AI Audit failed. Check your connection.');
+      setAuditResult('Audit failed. Please try again.');
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [nodes, edges, currentFlow]);
+
+  if (!token) return <LoginScreen />;
+
+  return (
+    <div style={{
+      width: '100vw', height: '100vh',
+      display: 'flex', flexDirection: 'column',
+      background: '#060d1a', overflow: 'hidden',
+    }}>
+      <Toaster
+        position="top-center"
+        toastOptions={{
+          style: {
+            background: '#0d1f33', color: '#e8f0fe',
+            border: '1px solid #1a3a5c',
+            fontFamily: '"DM Sans", sans-serif', fontSize: 13,
+          },
+          success: { iconTheme: { primary: '#00ca72', secondary: '#060d1a' } },
+          error:   { iconTheme: { primary: '#e2445c', secondary: '#060d1a' } },
+        }}
+      />
+
+      <Header />
+
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <Sidebar onAuditRequest={handleAudit} />
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <FlowCanvas onAudit={handleAudit} />
+        </div>
+      </div>
+    </div>
+  );
+}

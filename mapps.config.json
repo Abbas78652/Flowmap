@@ -1,0 +1,36 @@
+{
+  "name": "FlowMap",
+  "version": "1.0.0",
+  "description": "Visualize and debug your monday.com automation chains as interactive flow diagrams.",
+  "author": "Your Name",
+  "supportEmail": "support@yourapp.com",
+  "privacyPolicyUrl": "https://yourapp.com/privacy",
+  "termsOfServiceUrl": "https://yourapp.com/terms",
+  "features": [
+    {
+      "type": "BoardView",
+      "name": "FlowMap View",
+      "urlPath": "/",
+      "permissions": ["boards:read"],
+      "description": "Visualize your board's automations as an interactive flow diagram"
+    },
+    {
+      "type": "DashboardWidget",
+      "name": "FlowMap Widget",
+      "urlPath": "/widget",
+      "permissions": ["boards:read"],
+      "description": "Cross-board automation overview widget"
+    }
+  ],
+  "oauth": {
+    "permissions": [
+      "boards:read",
+      "me:read",
+      "workspaces:read",
+      "account:read"
+    ]
+  },
+  "tunnel": {
+    "local_url": "http://localhost:3000"
+  }
+}
