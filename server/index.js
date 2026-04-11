@@ -60,8 +60,8 @@ app.get('/auth/callback', async (req, res) => {
       { headers: { 'Content-Type': 'application/json' } }
     );
     const { access_token } = response.data;
-    const frontendPort = process.env.FRONTEND_PORT || 3002;
-    res.redirect(`http://localhost:${frontendPort}?token=${access_token}`);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+    res.redirect(`${frontendUrl}?token=${access_token}`);
   } catch (err) {
     console.error('OAuth error:', err.response?.data || err.message);
     res.status(500).json({ error: 'OAuth failed' });
