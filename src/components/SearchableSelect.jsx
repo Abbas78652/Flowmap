@@ -18,9 +18,12 @@ export default function SearchableSelect({ value, onChange, options, placeholder
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const filtered = options.filter(o =>
-    o.label.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = search.trim() === ''
+    ? options
+    : options.filter(o => {
+        const haystack = (o.searchText || o.label || '').toLowerCase();
+        return haystack.includes(search.toLowerCase());
+      });
 
   const selected = options.find(o => o.value === value);
 

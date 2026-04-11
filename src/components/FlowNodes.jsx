@@ -361,7 +361,7 @@ function useBoardOptions(workspaceId) {
       ? boards
       : boards.filter(b => String(b.workspace?.id) === String(workspaceId));
     return {
-      options: filtered.map(b => ({ value: b.id, label: b.name })),
+      options: filtered.map(b => ({ value: b.id, label: b.name || `Board (${b.id})`, searchText: `${b.name || ''} ${b.id}`.toLowerCase() })),
       loading: boardsLoading,
       count:   filtered.length,
     };
