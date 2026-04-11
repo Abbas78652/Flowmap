@@ -190,7 +190,6 @@ function FlowsPanel({ t }) {
   const activating     = useStore(s => s.activating);
   const currentFlow    = useStore(s => s.currentFlowName);
   const nodes          = useStore(s => s.nodes);
-  const edges          = useStore(s => s.edges);
 
   const [name, setName]               = useState('');
   const [editingId, setEditingId]     = useState(null);
