@@ -6,6 +6,31 @@ const cors    = require('cors');
 const axios   = require('axios');
 require('dotenv').config();
 
+// Mailjet email sender
+async function sendMailjetEmail({ to, subject, body }) {
+  const apiKey    = process.env.MAILJET_API_KEY;
+  const apiSecret = process.env.MAILJET_API_SECRET;
+  const fromEmail = process.env.MAILJET_FROM_EMAIL || 'noreply@flowmap.app';
+  const fromName  = process.env.MAILJET_FROM_NAME  || 'FlowMap Automation';
+
+  if (!apiKey || !apiSecret) throw new Error('Mailjet credentials not configured. Add MAILJET_API_KEY and MAILJET_API_SECRET to backend environment variables.');
+
+  const response = await axios.post(
+    'https://api.mailjet.com/v3.1/send',
+    {
+      Messages: [{
+        From:     { Email: fromEmail, Name: fromName },
+        To:       [{ Email: to }],
+        Subject:  subject,
+        TextPart: body,
+        HTMLPart: `<div style='font-family:sans-serif;'>${body.replace(/\n/g, '<br>')}</div>`,
+      }],
+    },
+    { auth: { username: apiKey, password: apiSecret } }
+  );
+  return response.data;
+}
+
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
@@ -471,6 +496,18 @@ async function executeAction(node, event, token) {
 
   switch (templateId) {
 
+    // ── SEND EMAIL via Mailjet ──
+    case 'send_email': {
+      const to      = resolveTokens(node.data?.emailTo);
+      const subject = resolveTokens(node.data?.emailSubject) || 'Notification from FlowMap';
+      const body    = resolveTokens(node.data?.message) || `Automation triggered for: ${event.pulseName}`;
+
+      if (!to) return 'No recipient email — skipped';
+
+      await sendMailjetEmail({ to, subject, body });
+      return `Email sent to ${to}`;
+    }
+
     // ── CREATE ITEM ──
     case 'create_item': {
       const name    = resolveTokens(itemName) || `New Item from ${event.pulseName}`;
@@ -492,12 +529,9 @@ async function executeAction(node, event, token) {
 
     // ── NOTIFY SOMEONE ──
     case 'notify_someone': {
-      const text = resolveTokens(message) || `FlowMap notification for: ${event.pulseName}`;
-      // Get user ID from the people column
-      const colVal = selectedColumnId
-        ? await getItemColumnValue(event.pulseId, selectedColumnId, token)
-        : null;
-      const userId = colVal?.persons_and_teams?.[0]?.id || event.userId;
+      const text = resolveTokens(node.data?.message) || `FlowMap automation triggered for: ${event.pulseName}`;
+      // Use selectedPersonId (from person picker) or fall back to triggering user
+      const userId = node.data?.selectedPersonId || event.userId;
       if (!userId) return 'No recipient found — notification skipped';
       const mutation = `
         mutation($userId: ID!, $text: String!, $itemId: ID!) {
@@ -533,7 +567,10 @@ async function executeAction(node, event, token) {
 
     // ── ASSIGN PERSON ──
     case 'assign_person': {
-      if (!selectedColumnId || !value) return 'No column or value — skipped';
+      if (!selectedColumnId) return 'No column selected — skipped';
+      // Use selectedPersonId from person picker
+      const personId = node.data?.selectedPersonId || value;
+      if (!personId) return 'No person selected — skipped';
       const mutation = `
         mutation($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
           change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
@@ -545,9 +582,9 @@ async function executeAction(node, event, token) {
         boardId:  targetBoard,
         itemId:   parseInt(event.pulseId),
         columnId: selectedColumnId,
-        value:    JSON.stringify({ personsAndTeams: [{ id: parseInt(value), kind: 'person' }] }),
+        value:    JSON.stringify({ personsAndTeams: [{ id: parseInt(personId), kind: 'person' }] }),
       }, token);
-      return `Person assigned`;
+      return `Person ${personId} assigned`;
     }
 
     // ── SET DATE ──

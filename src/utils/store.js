@@ -36,9 +36,15 @@ export const useStore = create((set, get) => ({
   workspaces:    [],
   setWorkspaces: workspaces => set({ workspaces }),
 
+  // ── Workspace users (for notify/assign) ──
+  workspaceUsers:    [],
+  setWorkspaceUsers: users => set({ workspaceUsers: users }),
+
   // ── Boards ──
   boards:    [],
   setBoards: boards => set({ boards }),
+  boardsLoading: false,
+  setBoardsLoading: v => set({ boardsLoading: v }),
 
   // ── Flow canvas — restored from draft on startup ──
   nodes:    savedDraft?.nodes || [],

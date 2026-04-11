@@ -53,20 +53,21 @@ export default function SearchableSelect({ value, onChange, options, placeholder
         </span>
       </button>
 
-      {/* Dropdown */}
+      {/* Dropdown — uses portal-style positioning to escape React Flow z-index */}
       {open && (
         <div style={{
           position:   'absolute',
           top:        '100%',
           left:       0,
           right:      0,
-          zIndex:     99999,
+          zIndex:     999999,
           background: t.bgCard,
           border:     `1px solid ${color}44`,
           borderRadius: 8,
           marginTop:  3,
-          boxShadow:  '0 8px 32px #00000033',
+          boxShadow:  '0 12px 40px #00000055',
           overflow:   'hidden',
+          isolation:  'isolate',
         }}>
           {/* Search input */}
           <div style={{ padding: '8px 8px 4px', background: t.bgCard }}>

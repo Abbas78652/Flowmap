@@ -32,12 +32,12 @@ export const TEMPLATE_CONFIGS = {
   checkbox_checked: { notes: 'Only continues if the selected checkbox column is ticked.', fields: ['board', 'column:checkbox'], required: ['board', 'column'] },
   no_condition:     { notes: 'No condition — the action runs every time the trigger fires without filtering.', fields: [], required: [] },
   // ACTIONS
-  notify_someone:   { notes: 'Sends a monday.com notification to a person or team with your message.', fields: ['board', 'column:people|team', 'rich:message'], required: ['board'] },
-  send_email:       { notes: 'Sends an automated email to the specified recipient.', fields: ['rich:email_to', 'rich:email_subject', 'rich:message'], required: ['email_to', 'email_subject'] },
+  notify_someone:   { notes: 'Sends a monday.com in-app notification to the selected person with your message.', fields: ['board', 'person_picker', 'rich:message'], required: ['board'] },
+  send_email:       { notes: 'Sends an email via Mailjet. Enter recipient email, subject and message body.', fields: ['email_to', 'rich:email_subject', 'rich:message'], required: ['email_to', 'email_subject', 'message'] },
   create_item:      { notes: 'Creates a new item in the target board and group with the specified name.', fields: ['board', 'group', 'rich:item_name'], required: ['board', 'item_name'] },
   move_item:        { notes: 'Moves the triggering item into a different group.', fields: ['board', 'group'], required: ['board', 'group'] },
   set_status:       { notes: 'Changes a status column to the selected value on the triggering item.', fields: ['board', 'column:status', 'value:status'], required: ['board', 'column', 'value'] },
-  assign_person:    { notes: 'Sets the people column to a specific person on the triggering item.', fields: ['board', 'column:people|team', 'value:text'], required: ['board', 'column', 'value'] },
+  assign_person:    { notes: 'Sets the people column to a specific person on the triggering item.', fields: ['board', 'column:people|team', 'person_picker'], required: ['board', 'column'] },
   set_date:         { notes: 'Sets a date column to today or a calculated offset (e.g. today+7).', fields: ['board', 'column:date|timeline', 'date_offset'], required: ['board', 'column'] },
   create_subitem:   { notes: 'Adds a subitem to the triggering item with the specified name.', fields: ['board', 'rich:item_name'], required: ['board'] },
   duplicate_item:   { notes: 'Creates an exact copy of the triggering item in the same or another board.', fields: ['board', 'group'], required: ['board'] },
@@ -304,9 +304,9 @@ function NodeShell({ data, selected, children, sourceHandle = true, targetHandle
         <Handle type="source" position={Position.Right}
           style={{ background: data.color, width: 10, height: 10, border: `2px solid ${t.nodeBg}` }} />
       )}
-      {/* Validation dot top-left */}
+      {/* Validation dot — top right inside card, doesn't overlap handles */}
       {isValid !== undefined && (
-        <div style={{ position: 'absolute', top: 8, left: -4 }}>
+        <div style={{ position: 'absolute', top: 8, right: selected ? 20 : 8 }}>
           <ValidationDot isValid={isValid} />
         </div>
       )}
@@ -354,13 +354,26 @@ function useWorkspaceOptions() {
 }
 
 function useBoardOptions(workspaceId) {
-  const boards = useStore(s => s.boards);
+  const boards        = useStore(s => s.boards);
+  const boardsLoading = useStore(s => s.boardsLoading);
   return useMemo(() => {
-    const filtered = (!workspaceId || workspaceId === '__all__')
+    const filtered = !workspaceId
       ? boards
-      : boards.filter(b => b.workspace?.id === workspaceId);
-    return filtered.map(b => ({ value: b.id, label: `${b.name} (${b.id})` }));
-  }, [boards, workspaceId]);
+      : boards.filter(b => String(b.workspace?.id) === String(workspaceId));
+    return {
+      options: filtered.map(b => ({ value: b.id, label: b.name })),
+      loading: boardsLoading,
+      count:   filtered.length,
+    };
+  }, [boards, workspaceId, boardsLoading]);
+}
+
+// People options from workspace users
+function useUserOptions() {
+  const users = useStore(s => s.workspaceUsers);
+  return useMemo(() =>
+    users.map(u => ({ value: String(u.id), label: `${u.name} (${u.email})` })),
+  [users]);
 }
 
 function useGroupOptions(boardId) {
@@ -441,7 +454,8 @@ function useNodeValidation(data) {
 function TemplateFields({ data, updateNodeData, color, t }) {
   const config        = TEMPLATE_CONFIGS[data.templateId] || { fields: [], notes: '' };
   const workspaceOpts = useWorkspaceOptions();
-  const boardOpts     = useBoardOptions(data.selectedWorkspaceId);
+  const { options: boardOpts, loading: boardsLoading, count: boardCount } = useBoardOptions(data.selectedWorkspaceId);
+  const userOpts       = useUserOptions();
   const groupOpts     = useGroupOptions(data.selectedBoardId);
   const tokens        = useTokens(data.selectedBoardId);
 
@@ -458,9 +472,9 @@ function TemplateFields({ data, updateNodeData, color, t }) {
   }, [boards, data.selectedBoardId, data.selectedColumnId]);
 
   const handleWorkspaceChange = workspaceId => {
-    // Reset board and downstream when workspace changes
+    // Store null for "all workspaces" instead of '__all__'
     updateNodeData(data.id, {
-      selectedWorkspaceId: workspaceId,
+      selectedWorkspaceId: workspaceId === '__all__' ? null : workspaceId,
       selectedBoardId:     '',
       boardName:           '',
       selectedColumnId:    '',
@@ -504,16 +518,16 @@ function TemplateFields({ data, updateNodeData, color, t }) {
         <>
           <FieldLabel text="Workspace" color={color} />
           <SearchableSelect
-            value={data.selectedWorkspaceId || '__all__'}
+            value={data.selectedWorkspaceId || ''}
             onChange={handleWorkspaceChange}
             options={workspaceOpts}
             placeholder="Select workspace..."
             color={color}
           />
           {/* Board count indicator */}
-          {data.selectedWorkspaceId && data.selectedWorkspaceId !== '__all__' && (
+          {data.selectedWorkspaceId && (
             <div style={{ color: color + '88', fontSize: 9, marginTop: 3, textAlign: 'right' }}>
-              {boardOpts.length} board{boardOpts.length !== 1 ? 's' : ''} in this workspace
+              {boardsLoading ? 'Loading boards...' : `${boardCount} board${boardCount !== 1 ? 's' : ''} in this workspace`}
             </div>
           )}
         </>
@@ -524,7 +538,9 @@ function TemplateFields({ data, updateNodeData, color, t }) {
         <>
           <FieldLabel text="Board" color={color} required={required.includes('board')} />
           <SearchableSelect value={data.selectedBoardId} onChange={handleBoardChange}
-            options={boardOpts} placeholder="Search and select board..." color={color} />
+            options={boardOpts}
+            placeholder={boardsLoading ? 'Loading boards...' : `Search ${boardOpts.length} boards...`}
+            color={color} />
         </>
       )}
 
@@ -646,6 +662,39 @@ function TemplateFields({ data, updateNodeData, color, t }) {
           onChange={v => updateNodeData(data.id, { emailSubject: v })}
           placeholder='Email subject or use {+} for dynamic values'
           color={color} tokens={tokens} t={t} />
+      )}
+
+      {/* PERSON PICKER — for notify and assign */}
+      {fields.includes('person_picker') && (
+        <>
+          <FieldLabel text="Person to Notify / Assign" color={color} required />
+          <SearchableSelect
+            value={data.selectedPersonId || ''}
+            onChange={v => {
+              const user = userOpts.find(u => u.value === v);
+              updateNodeData(data.id, { selectedPersonId: v, personName: user?.label || '' });
+            }}
+            options={userOpts}
+            placeholder="Search team members..."
+            color={color}
+          />
+        </>
+      )}
+
+      {/* PLAIN EMAIL TO (not rich — email addresses only) */}
+      {fields.includes('email_to') && (
+        <>
+          <FieldLabel text="Recipient Email" color={color} required={required.includes('email_to')} />
+          <NodeInput
+            value={data.emailTo || ''}
+            onChange={v => updateNodeData(data.id, { emailTo: v })}
+            placeholder="recipient@email.com"
+            color={color} t={t} type="email"
+          />
+          <div style={{ color: color + '77', fontSize: 9, marginTop: 3 }}>
+            💡 Sent via Mailjet — ensure MAILJET_API_KEY is set in backend
+          </div>
+        </>
       )}
 
       {/* NOTES */}

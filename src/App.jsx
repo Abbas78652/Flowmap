@@ -9,7 +9,7 @@ import Header      from './components/Header';
 import Sidebar     from './components/Sidebar';
 import FlowCanvas  from './components/FlowCanvas';
 
-import { getCurrentUser, getBoards, getWorkspaces } from './api/monday';
+import { getCurrentUser, getBoards, getWorkspaces, getWorkspaceUsers } from './api/monday';
 import { serializeFlowForAI }        from './utils/flowBuilder';
 import { useStore }                  from './utils/store';
 import { themes }                    from './utils/theme';
@@ -20,8 +20,10 @@ export default function App() {
   const token          = useStore(s => s.token);
   const setToken       = useStore(s => s.setToken);
   const setUser        = useStore(s => s.setUser);
-  const setBoards      = useStore(s => s.setBoards);
-  const setWorkspaces  = useStore(s => s.setWorkspaces);
+  const setBoards          = useStore(s => s.setBoards);
+  const setBoardsLoading   = useStore(s => s.setBoardsLoading);
+  const setWorkspaces      = useStore(s => s.setWorkspaces);
+  const setWorkspaceUsers  = useStore(s => s.setWorkspaceUsers);
   const nodes          = useStore(s => s.nodes);
   const edges          = useStore(s => s.edges);
   const currentFlow    = useStore(s => s.currentFlowName);
@@ -52,10 +54,19 @@ export default function App() {
     localStorage.setItem('flowmap_token', token);
     (async () => {
       try {
-        const [user, boards, workspaces] = await Promise.all([getCurrentUser(token), getBoards(token), getWorkspaces(token)]);
+        setBoardsLoading(true);
+        const [user, workspaces, users] = await Promise.all([
+          getCurrentUser(token),
+          getWorkspaces(token),
+          getWorkspaceUsers(token),
+        ]);
         setUser(user);
-        setBoards(boards);
         setWorkspaces(workspaces);
+        setWorkspaceUsers(users);
+        // Fetch boards separately (paginated — may take longer)
+        const boards = await getBoards(token);
+        setBoards(boards);
+        setBoardsLoading(false);
         toast.success(`Welcome, ${user.name}! ${boards.length} boards across ${workspaces.length} workspaces loaded.`);
       } catch (err) {
         console.error(err);
