@@ -192,24 +192,8 @@ export default function Header() {
           }}>✦ Upgrade</button>
         )}
 
-        {/* User avatar */}
-        {user && (
-          <div onClick={logout} title={`${user.name} · Click to log out`} style={{
-            width: 32, height: 32, borderRadius: 50,
-            overflow: 'hidden', border: `2px solid ${t.border}`,
-            cursor: 'pointer', flexShrink: 0,
-          }}>
-            {user.photo_thumb
-              ? <img src={user.photo_thumb} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              : <div style={{
-                  width: '100%', height: '100%',
-                  background: `linear-gradient(135deg, ${t.accent}, ${t.accent2})`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontWeight: 700, fontSize: 13,
-                }}>{user.name?.[0]?.toUpperCase() || '?'}</div>
-            }
-          </div>
-        )}
+        {/* User avatar with dropdown */}
+        {user && <UserMenu user={user} logout={logout} t={t} />}
       </div>
 
       {/* Save name prompt modal */}
@@ -256,5 +240,182 @@ export default function Header() {
         </div>
       )}
     </>
+  );
+}
+
+// ─────────────────────────────────────────────
+// USER MENU — avatar + dropdown with confirmation
+// ─────────────────────────────────────────────
+function UserMenu({ user, logout, t }) {
+  const [open, setOpen]             = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setConfirmLogout(false); } };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleLogout = () => {
+    if (confirmLogout) {
+      logout();
+    } else {
+      setConfirmLogout(true);
+    }
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      {/* Avatar button */}
+      <button
+        onClick={() => { setOpen(o => !o); setConfirmLogout(false); }}
+        style={{
+          width: 34, height: 34, borderRadius: 50,
+          overflow: 'hidden',
+          border: `2px solid ${open ? t.accent : t.border}`,
+          cursor: 'pointer', flexShrink: 0,
+          padding: 0, background: 'none',
+          transition: 'border-color 0.15s',
+          boxShadow: open ? `0 0 0 3px ${t.accent}33` : 'none',
+        }}
+      >
+        {user.photo_thumb
+          ? <img src={user.photo_thumb} alt={user.name}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          : <div style={{
+              width: '100%', height: '100%',
+              background: `linear-gradient(135deg, ${t.accent}, ${t.accent2})`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', fontWeight: 700, fontSize: 14,
+            }}>
+              {user.name?.[0]?.toUpperCase() || '?'}
+            </div>
+        }
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div style={{
+          position:     'absolute',
+          top:          'calc(100% + 10px)',
+          right:        0,
+          minWidth:     220,
+          background:   t.bgCard,
+          border:       `1px solid ${t.border}`,
+          borderRadius: 12,
+          boxShadow:    `0 8px 32px ${t.nodeShadow}`,
+          zIndex:       9999,
+          overflow:     'hidden',
+          fontFamily:   '"DM Sans", sans-serif',
+        }}>
+          {/* User info header */}
+          <div style={{
+            padding:      '14px 16px',
+            borderBottom: `1px solid ${t.border}`,
+            display:      'flex',
+            alignItems:   'center',
+            gap:          12,
+          }}>
+            {/* Avatar (larger) */}
+            <div style={{
+              width: 42, height: 42, borderRadius: 50, overflow: 'hidden',
+              border: `2px solid ${t.border}`, flexShrink: 0,
+            }}>
+              {user.photo_thumb
+                ? <img src={user.photo_thumb} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                : <div style={{
+                    width: '100%', height: '100%',
+                    background: `linear-gradient(135deg, ${t.accent}, ${t.accent2})`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#fff', fontWeight: 700, fontSize: 18,
+                  }}>{user.name?.[0]?.toUpperCase() || '?'}</div>
+              }
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{
+                color: t.textPrimary, fontWeight: 700, fontSize: 13,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{user.name}</div>
+              <div style={{
+                color: t.textMuted, fontSize: 11, marginTop: 2,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{user.email}</div>
+              {user.account?.name && (
+                <div style={{
+                  color: t.accent, fontSize: 10, marginTop: 3, fontWeight: 600,
+                }}>🏢 {user.account.name}</div>
+              )}
+            </div>
+          </div>
+
+          {/* Menu items */}
+          <div style={{ padding: '6px 0' }}>
+            <MenuItem icon="⚙️" label="Account Settings" color={t.textPrimary} t={t}
+              onClick={() => { window.open('https://monday.com/account', '_blank'); setOpen(false); }} />
+            <MenuItem icon="📖" label="FlowMap Documentation" color={t.textPrimary} t={t}
+              onClick={() => { window.open('https://github.com/Abbas78652/Flowmap', '_blank'); setOpen(false); }} />
+            <MenuItem icon="💬" label="Send Feedback" color={t.textPrimary} t={t}
+              onClick={() => { window.open('mailto:support@flowmap.app', '_blank'); setOpen(false); }} />
+          </div>
+
+          {/* Logout section */}
+          <div style={{ borderTop: `1px solid ${t.border}`, padding: '6px 0 8px' }}>
+            {confirmLogout ? (
+              <div style={{ padding: '8px 16px' }}>
+                <div style={{ color: t.danger, fontSize: 11, fontWeight: 600, marginBottom: 8, textAlign: 'center' }}>
+                  Are you sure you want to log out?
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    onClick={() => setConfirmLogout(false)}
+                    style={{
+                      flex: 1, background: t.bgInput,
+                      border: `1px solid ${t.border}`, borderRadius: 7,
+                      color: t.textMuted, fontSize: 12, fontWeight: 600,
+                      padding: '7px 0', cursor: 'pointer',
+                      fontFamily: '"DM Sans", sans-serif',
+                    }}
+                  >Cancel</button>
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      flex: 1, background: t.danger,
+                      border: 'none', borderRadius: 7,
+                      color: '#fff', fontSize: 12, fontWeight: 700,
+                      padding: '7px 0', cursor: 'pointer',
+                      fontFamily: '"DM Sans", sans-serif',
+                    }}
+                  >Log Out</button>
+                </div>
+              </div>
+            ) : (
+              <MenuItem icon="🚪" label="Log Out" color={t.danger} t={t} onClick={handleLogout} danger />
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ icon, label, color, t, onClick, danger }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        width: '100%', background: hover ? (danger ? t.danger + '18' : t.bgHover) : 'transparent',
+        border: 'none', padding: '9px 16px', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 10,
+        fontFamily: '"DM Sans", sans-serif', textAlign: 'left',
+        transition: 'background 0.1s',
+      }}
+    >
+      <span style={{ fontSize: 15, flexShrink: 0 }}>{icon}</span>
+      <span style={{ color: hover && danger ? t.danger : color, fontSize: 12, fontWeight: 500 }}>{label}</span>
+    </button>
   );
 }
