@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 // src/utils/store.js
 import { create } from 'zustand';
 
@@ -108,7 +109,7 @@ export const useStore = create((set, get) => ({
         body: JSON.stringify({ flow }),
       });
 
-      await res.json();
+      const data = await res.json();
 
       if (!res.ok || !data.success) {
         set({ activating: null });
