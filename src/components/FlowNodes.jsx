@@ -1,9 +1,11 @@
+/* eslint-disable no-unused-vars */
 // src/components/FlowNodes.jsx
 // Full theme-aware nodes with template-specific fields, token insertion, validation
 
 import React, { memo, useMemo, useState, useRef, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
 import SearchableSelect from './SearchableSelect';
+import { themes } from '../utils/theme';
 import { useStore } from '../utils/store';
 
 // ─────────────────────────────────────────────
