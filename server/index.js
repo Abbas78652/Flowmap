@@ -60,8 +60,8 @@ app.get('/auth/callback', async (req, res) => {
       { headers: { 'Content-Type': 'application/json' } }
     );
     const { access_token } = response.data;
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
-    res.redirect(`${frontendUrl}?token=${access_token}`);
+    const frontendPort = process.env.FRONTEND_PORT || 3002;
+    res.redirect(`http://localhost:${frontendPort}?token=${access_token}`);
   } catch (err) {
     console.error('OAuth error:', err.response?.data || err.message);
     res.status(500).json({ error: 'OAuth failed' });
@@ -347,7 +347,10 @@ function findFiredTrigger(nodes, event) {
     // For status triggers, check if the column and value match
     if (t.data?.templateId === 'status_changed') {
       const colMatches = !t.data?.selectedColumnId || t.data.selectedColumnId == event.columnId;
-      const valMatches = !t.data?.value || event.value?.label?.text === t.data.value;
+      // Match by index (stored value) OR by label text (fallback)
+      const valMatches = !t.data?.value ||
+        String(event.value?.index) === String(t.data.value) ||
+        event.value?.label?.text === t.data.value;
       if (colMatches && valMatches) return t;
       continue;
     }
@@ -510,9 +513,11 @@ async function executeAction(node, event, token) {
     // ── SET STATUS ──
     case 'set_status': {
       if (!selectedColumnId || !value) return 'No column or value — skipped';
+      // value is the status index (e.g. "1", "2") stored from settings.labels
+      // monday change_column_value expects: { "index": N }
       const mutation = `
         mutation($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
-          change_simple_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
+          change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
             id
           }
         }
@@ -521,9 +526,9 @@ async function executeAction(node, event, token) {
         boardId:  targetBoard,
         itemId:   parseInt(event.pulseId),
         columnId: selectedColumnId,
-        value:    value,
+        value:    JSON.stringify({ index: parseInt(value) }),
       }, token);
-      return `Status set to "${value}"`;
+      return `Status set (index: ${value})`;
     }
 
     // ── ASSIGN PERSON ──

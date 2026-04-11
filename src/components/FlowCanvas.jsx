@@ -1,7 +1,7 @@
 // src/components/FlowCanvas.jsx
-// The main flow builder canvas
+// The main flow builder canvas — fully theme-aware with collapsible sidebar
 
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -15,6 +15,7 @@ import 'reactflow/dist/style.css';
 
 import { TriggerNode, ConditionNode, ActionNode } from './FlowNodes';
 import { useStore } from '../utils/store';
+import { themes } from '../utils/theme';
 import { createNode, applyAutoLayout } from '../utils/flowBuilder';
 
 const nodeTypes = {
@@ -29,69 +30,73 @@ export default function FlowCanvas({ onAudit }) {
   const setStoreNodes = useStore(s => s.setNodes);
   const setStoreEdges = useStore(s => s.setEdges);
   const dragTemplate  = useStore(s => s.dragTemplate);
+  const theme         = useStore(s => s.theme);
+  const t             = themes[theme];
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges);
-  const reactFlowWrapper = useRef(null);
-  const [reactFlowInstance, setReactFlowInstance] = React.useState(null);
+  const [legendOpen, setLegendOpen]      = useState(true);
+  const reactFlowWrapper  = useRef(null);
+  const [rfInstance, setRfInstance] = React.useState(null);
 
-  // Sync local state UP to store (debounced to prevent loops)
-React.useEffect(() => {
-  const timer = setTimeout(() => { setStoreNodes(nodes); }, 50);
-  return () => clearTimeout(timer);
-}, [nodes]); // eslint-disable-line
+  // Sync local UP to store (debounced)
+  React.useEffect(() => {
+    const timer = setTimeout(() => { setStoreNodes(nodes); }, 50);
+    return () => clearTimeout(timer);
+  }, [nodes]); // eslint-disable-line
 
-React.useEffect(() => {
-  const timer = setTimeout(() => { setStoreEdges(edges); }, 50);
-  return () => clearTimeout(timer);
-}, [edges]); // eslint-disable-line
+  React.useEffect(() => {
+    const timer = setTimeout(() => { setStoreEdges(edges); }, 50);
+    return () => clearTimeout(timer);
+  }, [edges]); // eslint-disable-line
 
-// Sync store DOWN to local only when store changes externally (delete, load)
-const prevStoreNodes = React.useRef(storeNodes);
-React.useEffect(() => {
-  if (prevStoreNodes.current !== storeNodes) {
-    prevStoreNodes.current = storeNodes;
-    setNodes(storeNodes);
-  }
-}, [storeNodes]); // eslint-disable-line
+  // Sync store DOWN (external changes: delete, load)
+  const prevStoreNodes = React.useRef(storeNodes);
+  React.useEffect(() => {
+    if (prevStoreNodes.current !== storeNodes) {
+      prevStoreNodes.current = storeNodes;
+      setNodes(storeNodes);
+    }
+  }, [storeNodes]); // eslint-disable-line
 
-  // Connect two nodes with an edge
+  const prevStoreEdges = React.useRef(storeEdges);
+  React.useEffect(() => {
+    if (prevStoreEdges.current !== storeEdges) {
+      prevStoreEdges.current = storeEdges;
+      setEdges(storeEdges);
+    }
+  }, [storeEdges]); // eslint-disable-line
+
   const onConnect = useCallback((params) => {
     setEdges(eds => addEdge({
       ...params,
       type:      'smoothstep',
       animated:  true,
-      style:     { stroke: '#7eb8f7', strokeWidth: 2 },
-      markerEnd: { type: 'ArrowClosed', color: '#7eb8f7' },
+      style:     { stroke: t.accent, strokeWidth: 2 },
+      markerEnd: { type: 'ArrowClosed', color: t.accent },
     }, eds));
-  }, [setEdges]);
+  }, [setEdges, t.accent]);
 
-  // Drop node onto canvas
   const onDrop = useCallback((event) => {
     event.preventDefault();
-    if (!reactFlowInstance || !dragTemplate) return;
-
+    if (!rfInstance || !dragTemplate) return;
     const bounds   = reactFlowWrapper.current.getBoundingClientRect();
-    const position = reactFlowInstance.project({
+    const position = rfInstance.project({
       x: event.clientX - bounds.left,
       y: event.clientY - bounds.top,
     });
-
-    const newNode = createNode(dragTemplate.nodeType, dragTemplate, position);
-    setNodes(nds => [...nds, newNode]);
-  }, [reactFlowInstance, dragTemplate, setNodes]);
+    setNodes(nds => [...nds, createNode(dragTemplate.nodeType, dragTemplate, position)]);
+  }, [rfInstance, dragTemplate, setNodes]);
 
   const onDragOver = useCallback((event) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
-  // Auto-layout button
   const handleAutoLayout = useCallback(() => {
     setNodes(nds => applyAutoLayout(nds, edges));
   }, [edges, setNodes]);
 
-  // Clear canvas
   const handleClear = useCallback(() => {
     if (window.confirm('Clear all nodes? This cannot be undone.')) {
       setNodes([]);
@@ -100,16 +105,17 @@ React.useEffect(() => {
   }, [setNodes, setEdges]);
 
   const isEmpty = nodes.length === 0;
+  const isLight = theme === 'light';
 
   return (
-    <div ref={reactFlowWrapper} style={{ width: '100%', height: '100%', background: '#060d1a' }}>
+    <div ref={reactFlowWrapper} style={{ width: '100%', height: '100%', background: t.bg }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onInit={setReactFlowInstance}
+        onInit={setRfInstance}
         onDrop={onDrop}
         onDragOver={onDragOver}
         nodeTypes={nodeTypes}
@@ -120,48 +126,129 @@ React.useEffect(() => {
         deleteKeyCode="Delete"
         proOptions={{ hideAttribution: true }}
       >
-        <Background color="#1a2a3a" gap={28} size={1.5} variant="dots" />
+        {/* Background grid */}
+        <Background
+          color={isLight ? '#d0dce8' : '#1a2a3a'}
+          gap={28} size={1.5} variant="dots"
+        />
 
-        <Controls style={{ background: '#0d1f33', border: '1px solid #1a3a5c', borderRadius: 10 }} />
+        {/* Controls */}
+        <Controls style={{
+          background:   t.bgCard,
+          border:       `1px solid ${t.border}`,
+          borderRadius: 10,
+          boxShadow:    `0 2px 8px ${t.nodeShadow}`,
+        }} />
 
+        {/* Minimap */}
         <MiniMap
-          nodeColor={n => n.data?.color || '#444'}
-          maskColor="#060d1a99"
-          style={{ background: '#0d1f33', border: '1px solid #1a3a5c', borderRadius: 10 }}
+          nodeColor={n => n.data?.color || t.textMuted}
+          maskColor={isLight ? '#f0f4f888' : '#060d1a99'}
+          style={{
+            background:   t.bgCard,
+            border:       `1px solid ${t.border}`,
+            borderRadius: 10,
+          }}
         />
 
         {/* Top toolbar */}
         <Panel position="top-right">
           <div style={{ display: 'flex', gap: 8 }}>
-            <ToolbarBtn onClick={handleAutoLayout} title="Auto-arrange nodes" color="#7eb8f7">
+            <ToolbarBtn onClick={handleAutoLayout} color={t.textSecondary} bg={t.bgCard} border={t.border}>
               ⬡ Auto Layout
             </ToolbarBtn>
-            <ToolbarBtn onClick={onAudit} title="AI audit this flow" color="#6c63ff">
+            <ToolbarBtn onClick={onAudit} color="#6c63ff" bg={t.bgCard} border={t.border}>
               🤖 Audit Flow
             </ToolbarBtn>
-            <ToolbarBtn onClick={handleClear} title="Clear canvas" color="#e2445c">
+            <ToolbarBtn onClick={handleClear} color={t.danger} bg={t.bgCard} border={t.border}>
               🗑 Clear
             </ToolbarBtn>
           </div>
         </Panel>
 
-        {/* Legend */}
+        {/* Legend — collapsible */}
         <Panel position="top-left">
-          <LegendPanel nodeCount={nodes.length} edgeCount={edges.length} />
+          <div style={{
+            background:     t.bgCard,
+            border:         `1px solid ${t.border}`,
+            borderRadius:   12,
+            fontFamily:     '"DM Sans", sans-serif',
+            boxShadow:      `0 2px 12px ${t.nodeShadow}`,
+            overflow:       'hidden',
+            minWidth:       legendOpen ? 160 : 'auto',
+            transition:     'all 0.2s ease',
+          }}>
+            {/* Legend header — always visible */}
+            <button
+              onClick={() => setLegendOpen(o => !o)}
+              title={legendOpen ? 'Collapse legend' : 'Expand legend'}
+              style={{
+                width:      '100%',
+                background: 'none',
+                border:     'none',
+                cursor:     'pointer',
+                padding:    '10px 14px',
+                display:    'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap:        8,
+                color:      t.textMuted,
+                fontSize:   10,
+                fontWeight: 700,
+                letterSpacing: '0.1em',
+                fontFamily: '"DM Sans", sans-serif',
+              }}
+            >
+              <span>📋 LEGEND</span>
+              <span style={{ fontSize: 12, color: t.textDim }}>
+                {legendOpen ? '◀' : '▶'}
+              </span>
+            </button>
+
+            {/* Legend body */}
+            {legendOpen && (
+              <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${t.border}` }}>
+                <div style={{ marginTop: 10 }}>
+                  {[
+                    { color: '#6c63ff', label: 'Trigger'   },
+                    { color: '#fdab3d', label: 'Condition' },
+                    { color: '#00ca72', label: 'Action'    },
+                  ].map(item => (
+                    <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+                      <div style={{ width: 10, height: 10, borderRadius: 3, background: item.color, flexShrink: 0 }} />
+                      <span style={{ color: t.textPrimary, fontSize: 11 }}>{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8, paddingTop: 8 }}>
+                  <Row label="Nodes"       value={nodes.length} t={t} />
+                  <Row label="Connections" value={edges.length} t={t} />
+                </div>
+
+                <div style={{ color: t.textDim, fontSize: 9, marginTop: 8, lineHeight: 1.6 }}>
+                  Drag nodes from sidebar<br/>
+                  Connect: drag between dots<br/>
+                  Delete: select + Delete key
+                </div>
+              </div>
+            )}
+          </div>
         </Panel>
 
         {/* Empty state */}
         {isEmpty && (
           <Panel position="bottom-center">
             <div style={{
-              background:   '#0d1f33ee',
-              border:       '1px dashed #1a3a5c',
+              background:   t.bgCard + 'ee',
+              border:       `1px dashed ${t.border}`,
               borderRadius: 12,
               padding:      '14px 24px',
-              color:        '#4a6080',
+              color:        t.textMuted,
               fontSize:     13,
               fontFamily:   '"DM Sans", sans-serif',
               textAlign:    'center',
+              boxShadow:    `0 2px 12px ${t.nodeShadow}`,
             }}>
               👈 Drag nodes from the left panel onto this canvas to build your automation flow
             </div>
@@ -172,7 +259,7 @@ React.useEffect(() => {
   );
 }
 
-function ToolbarBtn({ onClick, children, color }) {
+function ToolbarBtn({ onClick, children, color, bg, border }) {
   const [hover, setHover] = React.useState(false);
   return (
     <button
@@ -180,59 +267,27 @@ function ToolbarBtn({ onClick, children, color }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        background:   hover ? color + '22' : '#0d1f33',
-        border:       `1px solid ${hover ? color : '#1a3a5c'}`,
+        background:   hover ? color + '22' : bg,
+        border:       `1px solid ${hover ? color : border}`,
         borderRadius: 8,
-        color:        hover ? color : '#7eb8f7',
+        color:        hover ? color : color,
         fontSize:     12,
         fontWeight:   600,
         padding:      '7px 14px',
         cursor:       'pointer',
         fontFamily:   '"DM Sans", sans-serif',
         transition:   'all 0.15s',
+        boxShadow:    `0 1px 4px ${color}22`,
       }}
     >{children}</button>
   );
 }
 
-function LegendPanel({ nodeCount, edgeCount }) {
+function Row({ label, value, t }) {
   return (
-    <div style={{
-      background:   '#0d1f33ee',
-      border:       '1px solid #1a3a5c',
-      borderRadius: 12,
-      padding:      '12px 16px',
-      fontFamily:   '"DM Sans", sans-serif',
-      backdropFilter: 'blur(8px)',
-    }}>
-      <div style={{ color: '#4a6080', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', marginBottom: 10 }}>
-        LEGEND
-      </div>
-      {[
-        { color: '#6c63ff', label: 'Trigger'   },
-        { color: '#fdab3d', label: 'Condition' },
-        { color: '#00ca72', label: 'Action'    },
-      ].map(item => (
-        <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <div style={{ width: 10, height: 10, borderRadius: 3, background: item.color }} />
-          <span style={{ color: '#c8d8e8', fontSize: 11 }}>{item.label}</span>
-        </div>
-      ))}
-      <div style={{ borderTop: '1px solid #1a2f4a', marginTop: 10, paddingTop: 10 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-          <span style={{ color: '#4a6080', fontSize: 11 }}>Nodes</span>
-          <span style={{ color: '#7eb8f7', fontSize: 11, fontWeight: 700 }}>{nodeCount}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ color: '#4a6080', fontSize: 11 }}>Connections</span>
-          <span style={{ color: '#7eb8f7', fontSize: 11, fontWeight: 700 }}>{edgeCount}</span>
-        </div>
-      </div>
-      <div style={{ color: '#2a4060', fontSize: 10, marginTop: 10, lineHeight: 1.5 }}>
-        Drag nodes from sidebar<br/>
-        Connect: drag between dots<br/>
-        Delete: select + Delete key
-      </div>
+    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+      <span style={{ color: t.textMuted, fontSize: 11 }}>{label}</span>
+      <span style={{ color: t.textSecondary, fontSize: 11, fontWeight: 700 }}>{value}</span>
     </div>
   );
 }

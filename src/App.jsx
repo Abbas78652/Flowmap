@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 // src/App.jsx
 
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import toast, { Toaster } from 'react-hot-toast';
 
 import LoginScreen from './components/LoginScreen';
@@ -17,8 +17,6 @@ import { themes }                    from './utils/theme';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 export default function App() {
-  const theme          = useStore(s => s.theme);
-  const t              = themes[theme];
   const token          = useStore(s => s.token);
   const setToken       = useStore(s => s.setToken);
   const setUser        = useStore(s => s.setUser);
@@ -29,8 +27,12 @@ export default function App() {
   const setAuditResult = useStore(s => s.setAuditResult);
   const setAuditLoading= useStore(s => s.setAuditLoading);
   const setActivePanel = useStore(s => s.setActivePanel);
+  const theme          = useStore(s => s.theme);
+  const t              = themes[theme];
 
-  // ── Parse token from URL after OAuth ──
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Parse token from URL
   useEffect(() => {
     const params   = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
@@ -43,7 +45,7 @@ export default function App() {
     }
   }, []);
 
-  // ── Load user + boards when token arrives ──
+  // Load user + boards when token arrives
   useEffect(() => {
     if (!token) return;
     localStorage.setItem('flowmap_token', token);
@@ -52,51 +54,50 @@ export default function App() {
         const [user, boards] = await Promise.all([getCurrentUser(token), getBoards(token)]);
         setUser(user);
         setBoards(boards);
-        toast.success(`Welcome, ${user.name}!`);
+        toast.success(`Welcome, ${user.name}! ${boards.length} boards loaded.`);
       } catch (err) {
         console.error(err);
-        toast.error('Could not load your monday.com data.');
+        // Token expired — clear and force re-login
+        if (err.message?.includes('401') || err.message?.includes('token')) {
+          localStorage.removeItem('flowmap_token');
+          setToken(null);
+          toast.error('Session expired. Please reconnect.');
+        } else {
+          toast.error('Could not load boards. Check your connection.');
+        }
       }
     })();
   }, [token]);
 
-  // ── AI Audit handler ──
+  // AI Audit
   const handleAudit = useCallback(async () => {
-    if (nodes.length === 0) {
-      toast.error('Add some nodes to your flow first!');
-      return;
-    }
-
+    if (nodes.length === 0) { toast.error('Add some nodes to your flow first!'); return; }
     setAuditLoading(true);
     setActivePanel('audit');
 
     const flowText = serializeFlowForAI(nodes, edges, currentFlow);
-
-    const prompt = `You are an expert monday.com automation consultant. A user has built the following automation flow and wants your professional audit.
+    const prompt   = `You are an expert monday.com automation consultant. A user has built the following automation flow and wants your professional audit.
 
 ${flowText}
 
 Please provide:
-
 1. ✅ WHAT'S GOOD — Strengths of this automation design (2-3 points)
 2. ⚠️ POTENTIAL ISSUES — Problems, gaps, or risks (be specific)
 3. 💡 RECOMMENDATIONS — Concrete improvements they should make
-4. 🔄 MISSING STEPS — Any triggers, conditions, or actions that are missing for this to work reliably
+4. 🔄 MISSING STEPS — Any triggers, conditions, or actions that are missing for reliability
 5. ⭐ OVERALL SCORE — Rate this flow /10 and explain why
 
 Be specific to monday.com. Use practical, actionable language. Keep total response under 400 words.`;
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/audit`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ prompt }),
+      const res  = await fetch(`${BACKEND_URL}/api/audit`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
       });
       const data = await res.json();
       setAuditResult(data.result || 'No response received.');
       toast.success('AI Audit complete!');
     } catch (err) {
-      console.error(err);
       toast.error('AI Audit failed. Check your connection.');
       setAuditResult('Audit failed. Please try again.');
     } finally {
@@ -116,19 +117,26 @@ Be specific to monday.com. Use practical, actionable language. Keep total respon
         position="top-center"
         toastOptions={{
           style: {
-            background: '#0d1f33', color: '#e8f0fe',
-            border: '1px solid #1a3a5c',
-            fontFamily: '"DM Sans", sans-serif', fontSize: 13,
+            background:  t.bgCard,
+            color:       t.textPrimary,
+            border:      `1px solid ${t.border}`,
+            fontFamily:  '"DM Sans", sans-serif',
+            fontSize:    13,
+            boxShadow:   `0 4px 20px ${t.nodeShadow}`,
           },
-          success: { iconTheme: { primary: '#00ca72', secondary: '#060d1a' } },
-          error:   { iconTheme: { primary: '#e2445c', secondary: '#060d1a' } },
+          success: { iconTheme: { primary: t.success, secondary: t.bgCard } },
+          error:   { iconTheme: { primary: t.danger,  secondary: t.bgCard } },
         }}
       />
 
       <Header />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <Sidebar onAuditRequest={handleAudit} />
+        <Sidebar
+          onAuditRequest={handleAudit}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(c => !c)}
+        />
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <FlowCanvas onAudit={handleAudit} />
         </div>
