@@ -1,6 +1,8 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 // src/components/Header.jsx
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../utils/store';
+import { themes } from '../utils/theme';
 
 export default function Header() {
   const user            = useStore(s => s.user);
@@ -13,34 +15,30 @@ export default function Header() {
   const savedFlows      = useStore(s => s.savedFlows);
   const saveFlow        = useStore(s => s.saveFlow);
   const setActivePanel  = useStore(s => s.setActivePanel);
+  const theme           = useStore(s => s.theme);
+  const toggleTheme     = useStore(s => s.toggleTheme);
+  const t               = themes[theme];
 
-  const [editingName, setEditingName] = useState(false);
-  const [tempName, setTempName]       = useState('');
-  const [unsaved, setUnsaved]         = useState(false);
-  const [justSaved, setJustSaved]     = useState(false);
+  const [editingName, setEditingName]     = useState(false);
+  const [tempName, setTempName]           = useState('');
+  const [unsaved, setUnsaved]             = useState(false);
+  const [justSaved, setJustSaved]         = useState(false);
   const [showSavePrompt, setShowSavePrompt] = useState(false);
-  const [promptName, setPromptName]   = useState('');
+  const [promptName, setPromptName]       = useState('');
 
-  // Track unsaved changes — any time nodes change, mark as unsaved
   useEffect(() => {
     if (nodes.length > 0) setUnsaved(true);
   }, [nodes]);
 
-  // ── Save handler ──
   const handleSave = () => {
     if (nodes.length === 0) return;
-
-    // If flow has no name yet, show quick name prompt
-    const isUntitled = !currentFlowName || currentFlowName === 'Untitled Flow';
+    const isUntitled    = !currentFlowName || currentFlowName === 'Untitled Flow';
     const existsAlready = savedFlows.find(f => f.name === currentFlowName);
-
     if (isUntitled && !existsAlready) {
       setPromptName('');
       setShowSavePrompt(true);
       return;
     }
-
-    // Save directly
     commitSave(currentFlowName);
   };
 
@@ -54,7 +52,6 @@ export default function Header() {
     setTimeout(() => setJustSaved(false), 2000);
   };
 
-  // ── Name edit ──
   const startEdit = () => { setTempName(currentFlowName); setEditingName(true); };
   const commitEdit = () => {
     if (tempName.trim()) setFlowName(tempName.trim());
@@ -62,7 +59,6 @@ export default function Header() {
     setUnsaved(true);
   };
 
-  // ── Keyboard shortcut Ctrl+S ──
   useEffect(() => {
     const handler = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -72,127 +68,115 @@ export default function Header() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [nodes, currentFlowName, savedFlows]); // eslint-disable-line
+  }, [nodes, currentFlowName, savedFlows]);
 
   const canSave = nodes.length > 0;
+  const isLight = theme === 'light';
 
   return (
     <>
       <div style={{
-        height: 52, background: '#080f1e', borderBottom: '1px solid #1a2f4a',
+        height: 52, background: t.bgSidebar,
+        borderBottom: `1px solid ${t.border}`,
         display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12,
-        fontFamily: '"DM Sans", sans-serif', flexShrink: 0, position: 'relative',
+        fontFamily: '"DM Sans", sans-serif', flexShrink: 0,
       }}>
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <span style={{ fontSize: 18 }}>🗺️</span>
-          <span style={{ color: '#e8f0fe', fontWeight: 800, fontSize: 16, letterSpacing: '-0.02em' }}>FlowMap</span>
-          <span style={{ color: '#2a4060', fontSize: 11 }}>v1.0</span>
+          <span style={{ color: t.textPrimary, fontWeight: 800, fontSize: 16, letterSpacing: '-0.02em' }}>FlowMap</span>
+          <span style={{ color: t.textDim, fontSize: 11 }}>v1.0</span>
         </div>
 
-        <div style={{ color: '#1a2f4a', fontSize: 18, flexShrink: 0 }}>|</div>
+        <div style={{ color: t.border, fontSize: 18, flexShrink: 0 }}>|</div>
 
-        {/* Flow name (editable) */}
+        {/* Flow name */}
         {editingName ? (
-          <input
-            autoFocus
-            value={tempName}
+          <input autoFocus value={tempName}
             onChange={e => setTempName(e.target.value)}
             onBlur={commitEdit}
             onKeyDown={e => e.key === 'Enter' && commitEdit()}
             style={{
-              background: '#0d1f33', border: '1px solid #1f76c2', borderRadius: 7,
-              color: '#e8f0fe', fontSize: 13, fontWeight: 600, padding: '4px 10px',
+              background: t.bgInput, border: `1px solid ${t.accent}`, borderRadius: 7,
+              color: t.textPrimary, fontSize: 13, fontWeight: 600, padding: '4px 10px',
               outline: 'none', fontFamily: '"DM Sans", sans-serif', minWidth: 160,
             }}
           />
         ) : (
-          <button
-            onClick={startEdit}
-            title="Click to rename this flow"
-            style={{
-              background: 'none', border: '1px solid transparent', borderRadius: 7,
-              color: '#7eb8f7', fontSize: 13, fontWeight: 600, padding: '4px 10px',
-              cursor: 'pointer', fontFamily: '"DM Sans", sans-serif', display: 'flex',
-              alignItems: 'center', gap: 6, flexShrink: 0,
-            }}
-            onMouseEnter={e => e.currentTarget.style.borderColor = '#1a3a5c'}
+          <button onClick={startEdit} style={{
+            background: 'none', border: `1px solid transparent`, borderRadius: 7,
+            color: t.textSecondary, fontSize: 13, fontWeight: 600, padding: '4px 10px',
+            cursor: 'pointer', fontFamily: '"DM Sans", sans-serif',
+            display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+          }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = t.borderLight}
             onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'}
           >
             ✏️ {currentFlowName || 'Untitled Flow'}
-            {/* Unsaved dot indicator */}
             {unsaved && canSave && (
-              <span style={{
-                width: 7, height: 7, borderRadius: 50,
-                background: '#fdab3d',
-                boxShadow: '0 0 6px #fdab3d88',
-                flexShrink: 0,
-              }} title="Unsaved changes" />
+              <span style={{ width: 7, height: 7, borderRadius: 50, background: t.warning, flexShrink: 0 }} />
             )}
           </button>
         )}
 
-        {/* Node count */}
         {nodes.length > 0 && (
-          <span style={{ color: '#2a4060', fontSize: 11, flexShrink: 0 }}>
+          <span style={{ color: t.textMuted, fontSize: 11, flexShrink: 0 }}>
             {nodes.length} node{nodes.length !== 1 ? 's' : ''}
           </span>
         )}
 
-        {/* ── SAVE BUTTON ── */}
-        <button
-          onClick={handleSave}
-          disabled={!canSave}
-          title={canSave ? 'Save flow (Ctrl+S)' : 'Add nodes to the canvas first'}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            background: justSaved
-              ? '#00ca7222'
-              : canSave && unsaved
-                ? 'linear-gradient(135deg, #1f76c2, #6c63ff)'
-                : '#0d1626',
-            border: `1px solid ${justSaved ? '#00ca7244' : canSave && unsaved ? 'transparent' : '#1a3a5c'}`,
-            borderRadius: 8,
-            color: justSaved ? '#00ca72' : canSave && unsaved ? '#fff' : '#2a4060',
-            fontSize: 12, fontWeight: 700, padding: '6px 14px',
-            cursor: canSave ? 'pointer' : 'not-allowed',
-            boxShadow: canSave && unsaved && !justSaved ? '0 2px 12px #1f76c244' : 'none',
-            transition: 'all 0.2s', flexShrink: 0,
-          }}
-        >
+        {/* Save button */}
+        <button onClick={handleSave} disabled={!canSave} style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: justSaved ? t.success + '22'
+            : canSave && unsaved ? `linear-gradient(135deg, ${t.accent}, ${t.accent2})`
+            : t.bgButton,
+          border: `1px solid ${justSaved ? t.success + '44' : canSave && unsaved ? 'transparent' : t.border}`,
+          borderRadius: 8,
+          color: justSaved ? t.success : canSave && unsaved ? '#fff' : t.textMuted,
+          fontSize: 12, fontWeight: 700, padding: '6px 14px',
+          cursor: canSave ? 'pointer' : 'not-allowed',
+          boxShadow: canSave && unsaved && !justSaved ? `0 2px 12px ${t.accent}44` : 'none',
+          transition: 'all 0.2s', flexShrink: 0,
+        }}>
           {justSaved ? '✅ Saved!' : '💾 Save'}
           {canSave && unsaved && !justSaved && (
-            <span style={{
-              background: '#ffffff33', borderRadius: 4,
-              fontSize: 9, padding: '1px 5px', fontWeight: 600,
-            }}>Ctrl+S</span>
+            <span style={{ background: '#ffffff33', borderRadius: 4, fontSize: 9, padding: '1px 5px', fontWeight: 600 }}>
+              Ctrl+S
+            </span>
           )}
         </button>
 
         <div style={{ flex: 1 }} />
 
-        {/* Flows shortcut button */}
-        <button
-          onClick={() => setActivePanel('flows')}
-          title="View saved flows"
-          style={{
-            background: 'none', border: '1px solid #1a3a5c', borderRadius: 8,
-            color: '#4a6080', fontSize: 12, fontWeight: 600, padding: '5px 12px',
-            cursor: 'pointer', fontFamily: '"DM Sans", sans-serif',
-            display: 'flex', alignItems: 'center', gap: 5,
-          }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#7eb8f7'; e.currentTarget.style.borderColor = '#7eb8f7'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#4a6080'; e.currentTarget.style.borderColor = '#1a3a5c'; }}
+        {/* Flows shortcut */}
+        <button onClick={() => setActivePanel('flows')} style={{
+          background: 'none', border: `1px solid ${t.border}`, borderRadius: 8,
+          color: t.textMuted, fontSize: 12, fontWeight: 600, padding: '5px 12px',
+          cursor: 'pointer', fontFamily: '"DM Sans", sans-serif',
+          display: 'flex', alignItems: 'center', gap: 5,
+        }}
+          onMouseEnter={e => { e.currentTarget.style.color = t.textSecondary; e.currentTarget.style.borderColor = t.textSecondary; }}
+          onMouseLeave={e => { e.currentTarget.style.color = t.textMuted;     e.currentTarget.style.borderColor = t.border; }}
         >
           📂 {savedFlows.length} Flow{savedFlows.length !== 1 ? 's' : ''}
         </button>
 
+        {/* Theme toggle */}
+        <button onClick={toggleTheme} title={`Switch to ${isLight ? 'dark' : 'light'} mode`} style={{
+          background: t.bgButton, border: `1px solid ${t.border}`, borderRadius: 8,
+          color: t.textMuted, fontSize: 16, padding: '5px 10px',
+          cursor: 'pointer', transition: 'all 0.15s',
+        }}>
+          {isLight ? '🌙' : '☀️'}
+        </button>
+
         {/* Plan badge */}
         <div style={{
-          background: isPro ? '#0a0a1a' : '#0d1626',
-          border: `1px solid ${isPro ? '#6c63ff44' : '#1a3a5c'}`,
+          background: isPro ? t.accent2 + '22' : t.bgButton,
+          border: `1px solid ${isPro ? t.accent2 + '44' : t.border}`,
           borderRadius: 99, padding: '3px 12px',
-          color: isPro ? '#6c63ff' : '#4a6080',
+          color: isPro ? t.accent2 : t.textMuted,
           fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', flexShrink: 0,
         }}>
           ✦ {plan.toUpperCase()}
@@ -201,27 +185,25 @@ export default function Header() {
         {/* Upgrade */}
         {!isPro && (
           <button style={{
-            background: 'linear-gradient(135deg, #6c63ff, #1f76c2)',
+            background: `linear-gradient(135deg, ${t.accent2}, ${t.accent})`,
             border: 'none', borderRadius: 8, color: '#fff',
             fontSize: 12, fontWeight: 700, padding: '6px 14px',
-            cursor: 'pointer', boxShadow: '0 2px 12px #6c63ff44', flexShrink: 0,
-          }}>
-            ✦ Upgrade
-          </button>
+            cursor: 'pointer', flexShrink: 0,
+          }}>✦ Upgrade</button>
         )}
 
         {/* User avatar */}
         {user && (
           <div onClick={logout} title={`${user.name} · Click to log out`} style={{
             width: 32, height: 32, borderRadius: 50,
-            overflow: 'hidden', border: '2px solid #1a3a5c',
+            overflow: 'hidden', border: `2px solid ${t.border}`,
             cursor: 'pointer', flexShrink: 0,
           }}>
             {user.photo_thumb
               ? <img src={user.photo_thumb} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               : <div style={{
                   width: '100%', height: '100%',
-                  background: 'linear-gradient(135deg, #1f76c2, #6c63ff)',
+                  background: `linear-gradient(135deg, ${t.accent}, ${t.accent2})`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   color: '#fff', fontWeight: 700, fontSize: 13,
                 }}>{user.name?.[0]?.toUpperCase() || '?'}</div>
@@ -230,65 +212,45 @@ export default function Header() {
         )}
       </div>
 
-      {/* ── SAVE NAME PROMPT MODAL ── */}
+      {/* Save name prompt modal */}
       {showSavePrompt && (
-        <div
-          onClick={() => setShowSavePrompt(false)}
-          style={{
-            position: 'fixed', inset: 0, background: '#00000088',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 9999, fontFamily: '"DM Sans", sans-serif',
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              background: '#0d1626', border: '1px solid #1a3a5c',
-              borderRadius: 14, padding: '28px 32px', minWidth: 360,
-              boxShadow: '0 24px 80px #00000099',
-            }}
-          >
-            <div style={{ color: '#e8f0fe', fontSize: 16, fontWeight: 800, marginBottom: 6 }}>
-              💾 Save Flow
-            </div>
-            <div style={{ color: '#4a6080', fontSize: 12, marginBottom: 20 }}>
-              Give your automation flow a name so you can find it later.
-            </div>
-            <input
-              autoFocus
-              value={promptName}
+        <div onClick={() => setShowSavePrompt(false)} style={{
+          position: 'fixed', inset: 0, background: '#00000066',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999, fontFamily: '"DM Sans", sans-serif',
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: t.bgCard, border: `1px solid ${t.border}`,
+            borderRadius: 14, padding: '28px 32px', minWidth: 360,
+            boxShadow: '0 24px 80px #00000044',
+          }}>
+            <div style={{ color: t.textPrimary, fontSize: 16, fontWeight: 800, marginBottom: 6 }}>💾 Save Flow</div>
+            <div style={{ color: t.textMuted, fontSize: 12, marginBottom: 20 }}>Give your automation flow a name.</div>
+            <input autoFocus value={promptName}
               onChange={e => setPromptName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') commitSave(promptName); if (e.key === 'Escape') setShowSavePrompt(false); }}
               placeholder="e.g. Sales Pipeline, HR Onboarding..."
               style={{
-                width: '100%', background: '#060d1a',
-                border: '1px solid #1f76c2', borderRadius: 8,
-                color: '#e8f0fe', fontSize: 13, padding: '10px 12px',
+                width: '100%', background: t.bgInput,
+                border: `1px solid ${t.accent}`, borderRadius: 8,
+                color: t.textPrimary, fontSize: 13, padding: '10px 12px',
                 outline: 'none', fontFamily: '"DM Sans", sans-serif',
                 boxSizing: 'border-box', marginBottom: 16,
               }}
             />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setShowSavePrompt(false)}
-                style={{
-                  background: 'none', border: '1px solid #1a3a5c', borderRadius: 8,
-                  color: '#4a6080', fontSize: 12, fontWeight: 600,
-                  padding: '8px 16px', cursor: 'pointer',
-                }}
-              >Cancel</button>
-              <button
-                onClick={() => commitSave(promptName)}
-                disabled={!promptName.trim()}
-                style={{
-                  background: promptName.trim() ? 'linear-gradient(135deg, #1f76c2, #6c63ff)' : '#1a2f4a',
-                  border: 'none', borderRadius: 8,
-                  color: promptName.trim() ? '#fff' : '#3a5070',
-                  fontSize: 12, fontWeight: 700, padding: '8px 20px',
-                  cursor: promptName.trim() ? 'pointer' : 'not-allowed',
-                  boxShadow: promptName.trim() ? '0 4px 16px #1f76c244' : 'none',
-                }}
-              >💾 Save Flow</button>
+              <button onClick={() => setShowSavePrompt(false)} style={{
+                background: 'none', border: `1px solid ${t.border}`, borderRadius: 8,
+                color: t.textMuted, fontSize: 12, fontWeight: 600,
+                padding: '8px 16px', cursor: 'pointer',
+              }}>Cancel</button>
+              <button onClick={() => commitSave(promptName)} disabled={!promptName.trim()} style={{
+                background: promptName.trim() ? `linear-gradient(135deg, ${t.accent}, ${t.accent2})` : t.border,
+                border: 'none', borderRadius: 8,
+                color: promptName.trim() ? '#fff' : t.textMuted,
+                fontSize: 12, fontWeight: 700, padding: '8px 20px',
+                cursor: promptName.trim() ? 'pointer' : 'not-allowed',
+              }}>💾 Save Flow</button>
             </div>
           </div>
         </div>

@@ -4,6 +4,9 @@ import { create } from 'zustand';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
+// Restore draft flow from localStorage on startup
+const savedDraft = JSON.parse(localStorage.getItem('flowmap_draft') || 'null');
+
 export const useStore = create((set, get) => ({
   // ── Auth ──
   token:   null,
@@ -13,6 +16,14 @@ export const useStore = create((set, get) => ({
   logout:   () => {
     localStorage.removeItem('flowmap_token');
     set({ token: null, user: null, nodes: [], edges: [], auditResult: null });
+  },
+
+  // ── Theme ──
+  theme: localStorage.getItem('flowmap_theme') || 'light',
+  toggleTheme: () => {
+    const next = get().theme === 'light' ? 'dark' : 'light';
+    localStorage.setItem('flowmap_theme', next);
+    set({ theme: next });
   },
 
   // ── Plan ──
@@ -25,11 +36,22 @@ export const useStore = create((set, get) => ({
   boards:    [],
   setBoards: boards => set({ boards }),
 
-  // ── Flow canvas ──
-  nodes:    [],
-  edges:    [],
-  setNodes: nodes => set({ nodes }),
-  setEdges: edges => set({ edges }),
+  // ── Flow canvas — restored from draft on startup ──
+  nodes:    savedDraft?.nodes || [],
+  edges:    savedDraft?.edges || [],
+  currentFlowName: savedDraft?.name || 'Untitled Flow',
+
+  setNodes: nodes => {
+    set({ nodes });
+    // Auto-save draft to localStorage
+    const { edges, currentFlowName } = get();
+    localStorage.setItem('flowmap_draft', JSON.stringify({ nodes, edges, name: currentFlowName }));
+  },
+  setEdges: edges => {
+    set({ edges });
+    const { nodes, currentFlowName } = get();
+    localStorage.setItem('flowmap_draft', JSON.stringify({ nodes, edges, name: currentFlowName }));
+  },
 
   updateNodeData: (nodeId, updates) => set(state => ({
     nodes: state.nodes.map(n =>
@@ -47,8 +69,11 @@ export const useStore = create((set, get) => ({
   setDragTemplate: t => set({ dragTemplate: t }),
 
   // ── Current flow name ──
-  currentFlowName:    'Untitled Flow',
-  setCurrentFlowName: name => set({ currentFlowName: name }),
+  setCurrentFlowName: name => {
+    set({ currentFlowName: name });
+    const { nodes, edges } = get();
+    localStorage.setItem('flowmap_draft', JSON.stringify({ nodes, edges, name }));
+  },
 
   // ── Saved flows ──
   savedFlows: JSON.parse(localStorage.getItem('flowmap_flows') || '[]'),
@@ -71,11 +96,18 @@ export const useStore = create((set, get) => ({
     set({ savedFlows: updated, currentFlowName: name });
   },
 
-  loadFlow: (flow) => set({
-    nodes:           flow.nodes || [],
-    edges:           flow.edges || [],
-    currentFlowName: flow.name,
-  }),
+  loadFlow: (flow) => {
+    set({
+      nodes:           flow.nodes || [],
+      edges:           flow.edges || [],
+      currentFlowName: flow.name,
+    });
+    localStorage.setItem('flowmap_draft', JSON.stringify({
+      nodes: flow.nodes || [],
+      edges: flow.edges || [],
+      name:  flow.name,
+    }));
+  },
 
   deleteFlow: (flowId) => {
     const updated = get().savedFlows.filter(f => f.id !== flowId);
@@ -91,32 +123,23 @@ export const useStore = create((set, get) => ({
     set({ savedFlows: updated });
   },
 
-  // ── ACTIVATE FLOW — registers real webhooks ──
+  // ── ACTIVATE FLOW ──
   activateFlow: async (flowId) => {
     const { savedFlows, token } = get();
     const flow = savedFlows.find(f => f.id === flowId);
     if (!flow) return { success: false, error: 'Flow not found' };
-
     set({ activating: flowId });
-
     try {
       const res = await fetch(`${BACKEND_URL}/api/flows/activate`, {
         method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ flow }),
       });
-
       const data = await res.json();
-
       if (!res.ok || !data.success) {
         set({ activating: null });
         return { success: false, error: data.error || 'Activation failed', errors: data.errors };
       }
-
-      // Update the flow with webhook IDs and active status
       const updated = savedFlows.map(f =>
         f.id === flowId
           ? { ...f, active: true, webhookIds: data.webhooks, activatedAt: new Date().toISOString() }
@@ -125,28 +148,22 @@ export const useStore = create((set, get) => ({
       localStorage.setItem('flowmap_flows', JSON.stringify(updated));
       set({ savedFlows: updated, activating: null });
       return { success: true, webhooks: data.webhooks, errors: data.errors };
-
     } catch (err) {
       set({ activating: null });
       return { success: false, error: err.message };
     }
   },
 
-  // ── DEACTIVATE FLOW — removes webhooks ──
+  // ── DEACTIVATE FLOW ──
   deactivateFlow: async (flowId) => {
     const { savedFlows, token } = get();
     set({ activating: flowId });
-
     try {
       const res = await fetch(`${BACKEND_URL}/api/flows/deactivate`, {
         method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ flowId }),
       });
-
       const data = await res.json();
       const updated = savedFlows.map(f =>
         f.id === flowId ? { ...f, active: false, webhookIds: null } : f
@@ -154,7 +171,6 @@ export const useStore = create((set, get) => ({
       localStorage.setItem('flowmap_flows', JSON.stringify(updated));
       set({ savedFlows: updated, activating: null });
       return { success: true };
-
     } catch (err) {
       set({ activating: null });
       return { success: false, error: err.message };
@@ -168,7 +184,6 @@ export const useStore = create((set, get) => ({
   setExecLogs: (flowId, logs) => set(state => ({
     execLogs: { ...state.execLogs, [flowId]: logs },
   })),
-
   fetchExecLogs: async (flowId) => {
     try {
       const res  = await fetch(`${BACKEND_URL}/api/flows/${flowId}/logs`);

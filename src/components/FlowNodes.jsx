@@ -3,6 +3,8 @@
 
 import React, { memo, useMemo, useState, useRef, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
+import SearchableSelect from './SearchableSelect';
+import { themes } from '../utils/theme';
 import { useStore } from '../utils/store';
 
 // ─────────────────────────────────────────────
@@ -456,8 +458,7 @@ function TemplateFields({ data, updateNodeData, color }) {
       {fields.includes('board') && (
         <>
           <FieldLabel text="Board" color={color} />
-          <NodeSelect value={data.selectedBoardId} onChange={handleBoardChange}
-            options={boardOpts} placeholder="Select board..." color={color} />
+          <SearchableSelect value={data.selectedBoardId} onChange={handleBoardChange} options={boardOpts} placeholder="Search and select board..." color={color} />
         </>
       )}
 
@@ -465,8 +466,7 @@ function TemplateFields({ data, updateNodeData, color }) {
       {fields.includes('group') && data.selectedBoardId && (
         <>
           <FieldLabel text="Group" color={color} />
-          <NodeSelect value={data.selectedGroupId} onChange={handleGroupChange}
-            options={groupOpts} placeholder="Select group..." color={color} />
+          <SearchableSelect value={data.selectedGroupId} onChange={handleGroupChange} options={groupOpts} placeholder="Select group..." color={color} />
         </>
       )}
 
@@ -474,8 +474,7 @@ function TemplateFields({ data, updateNodeData, color }) {
       {colField && data.selectedBoardId && (
         <>
           <FieldLabel text="Column" color={color} />
-          <NodeSelect value={data.selectedColumnId} onChange={handleColumnChange}
-            options={columnOpts} placeholder="Select column..." color={color} />
+          <SearchableSelect value={data.selectedColumnId} onChange={handleColumnChange} options={columnOpts} placeholder="Select column..." color={color} />
         </>
       )}
 

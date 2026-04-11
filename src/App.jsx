@@ -12,10 +12,13 @@ import FlowCanvas  from './components/FlowCanvas';
 import { getCurrentUser, getBoards } from './api/monday';
 import { serializeFlowForAI }        from './utils/flowBuilder';
 import { useStore }                  from './utils/store';
+import { themes }                    from './utils/theme';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 export default function App() {
+  const theme          = useStore(s => s.theme);
+  const t              = themes[theme];
   const token          = useStore(s => s.token);
   const setToken       = useStore(s => s.setToken);
   const setUser        = useStore(s => s.setUser);
@@ -107,7 +110,7 @@ Be specific to monday.com. Use practical, actionable language. Keep total respon
     <div style={{
       width: '100vw', height: '100vh',
       display: 'flex', flexDirection: 'column',
-      background: '#060d1a', overflow: 'hidden',
+      background: t.bg, overflow: 'hidden',
     }}>
       <Toaster
         position="top-center"
