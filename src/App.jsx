@@ -9,7 +9,7 @@ import Header      from './components/Header';
 import Sidebar     from './components/Sidebar';
 import FlowCanvas  from './components/FlowCanvas';
 
-import { getCurrentUser, getBoards } from './api/monday';
+import { getCurrentUser, getBoards, getWorkspaces } from './api/monday';
 import { serializeFlowForAI }        from './utils/flowBuilder';
 import { useStore }                  from './utils/store';
 import { themes }                    from './utils/theme';
@@ -21,6 +21,7 @@ export default function App() {
   const setToken       = useStore(s => s.setToken);
   const setUser        = useStore(s => s.setUser);
   const setBoards      = useStore(s => s.setBoards);
+  const setWorkspaces  = useStore(s => s.setWorkspaces);
   const nodes          = useStore(s => s.nodes);
   const edges          = useStore(s => s.edges);
   const currentFlow    = useStore(s => s.currentFlowName);
@@ -51,10 +52,11 @@ export default function App() {
     localStorage.setItem('flowmap_token', token);
     (async () => {
       try {
-        const [user, boards] = await Promise.all([getCurrentUser(token), getBoards(token)]);
+        const [user, boards, workspaces] = await Promise.all([getCurrentUser(token), getBoards(token), getWorkspaces(token)]);
         setUser(user);
         setBoards(boards);
-        toast.success(`Welcome, ${user.name}! ${boards.length} boards loaded.`);
+        setWorkspaces(workspaces);
+        toast.success(`Welcome, ${user.name}! ${boards.length} boards across ${workspaces.length} workspaces loaded.`);
       } catch (err) {
         console.error(err);
         // Token expired — clear and force re-login

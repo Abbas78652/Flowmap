@@ -32,6 +32,10 @@ export const useStore = create((set, get) => ({
   isPro:      () => ['pro', 'business'].includes(get().plan),
   isBusiness: () => get().plan === 'business',
 
+  // ── Workspaces ──
+  workspaces:    [],
+  setWorkspaces: workspaces => set({ workspaces }),
+
   // ── Boards ──
   boards:    [],
   setBoards: boards => set({ boards }),

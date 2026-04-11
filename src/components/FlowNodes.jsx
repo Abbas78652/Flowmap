@@ -331,19 +331,26 @@ function NodeShell({ data, selected, children, sourceHandle = true, targetHandle
 // WORKSPACE HOOKS
 // ─────────────────────────────────────────────
 function useWorkspaceOptions() {
-  const boards = useStore(s => s.boards);
+  const workspaces = useStore(s => s.workspaces);
+  const boards     = useStore(s => s.boards);
   return useMemo(() => {
+    // Use dedicated workspaces list if available
+    if (workspaces && workspaces.length > 0) {
+      return [
+        { value: '__all__', label: '🌐 All Workspaces' },
+        ...workspaces.map(ws => ({ value: ws.id, label: ws.name })),
+      ];
+    }
+    // Fallback: derive from boards
     const seen = new Map();
     boards.forEach(b => {
       const ws = b.workspace;
-      if (ws && !seen.has(ws.id)) {
+      if (ws?.id && ws?.name && !seen.has(ws.id)) {
         seen.set(ws.id, { value: ws.id, label: ws.name });
       }
     });
-    // Add "All Workspaces" at top
-    const options = [{ value: '__all__', label: '🌐 All Workspaces' }, ...Array.from(seen.values())];
-    return options;
-  }, [boards]);
+    return [{ value: '__all__', label: '🌐 All Workspaces' }, ...Array.from(seen.values())];
+  }, [workspaces, boards]);
 }
 
 function useBoardOptions(workspaceId) {
