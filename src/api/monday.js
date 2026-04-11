@@ -51,7 +51,7 @@ export async function getCurrentUser(token) {
 export async function getBoards(token) {
   const query = `
     query {
-      boards(limit: 50, order_by: created_at) {
+      boards(limit: 500, order_by: created_at) {
         id
         name
         description

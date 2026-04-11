@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 // src/components/FlowNodes.jsx
 // Full theme-aware nodes with template-specific fields, token insertion, validation
 
@@ -328,9 +327,33 @@ function NodeShell({ data, selected, children, sourceHandle = true, targetHandle
 // ─────────────────────────────────────────────
 // DATA HOOKS
 // ─────────────────────────────────────────────
-function useBoardOptions() {
+// ─────────────────────────────────────────────
+// WORKSPACE HOOKS
+// ─────────────────────────────────────────────
+function useWorkspaceOptions() {
   const boards = useStore(s => s.boards);
-  return useMemo(() => boards.map(b => ({ value: b.id, label: `${b.name} (${b.id})` })), [boards]);
+  return useMemo(() => {
+    const seen = new Map();
+    boards.forEach(b => {
+      const ws = b.workspace;
+      if (ws && !seen.has(ws.id)) {
+        seen.set(ws.id, { value: ws.id, label: ws.name });
+      }
+    });
+    // Add "All Workspaces" at top
+    const options = [{ value: '__all__', label: '🌐 All Workspaces' }, ...Array.from(seen.values())];
+    return options;
+  }, [boards]);
+}
+
+function useBoardOptions(workspaceId) {
+  const boards = useStore(s => s.boards);
+  return useMemo(() => {
+    const filtered = (!workspaceId || workspaceId === '__all__')
+      ? boards
+      : boards.filter(b => b.workspace?.id === workspaceId);
+    return filtered.map(b => ({ value: b.id, label: `${b.name} (${b.id})` }));
+  }, [boards, workspaceId]);
 }
 
 function useGroupOptions(boardId) {
@@ -409,10 +432,11 @@ function useNodeValidation(data) {
 // TEMPLATE FIELDS RENDERER
 // ─────────────────────────────────────────────
 function TemplateFields({ data, updateNodeData, color, t }) {
-  const config     = TEMPLATE_CONFIGS[data.templateId] || { fields: [], notes: '' };
-  const boardOpts  = useBoardOptions();
-  const groupOpts  = useGroupOptions(data.selectedBoardId);
-  const tokens     = useTokens(data.selectedBoardId);
+  const config        = TEMPLATE_CONFIGS[data.templateId] || { fields: [], notes: '' };
+  const workspaceOpts = useWorkspaceOptions();
+  const boardOpts     = useBoardOptions(data.selectedWorkspaceId);
+  const groupOpts     = useGroupOptions(data.selectedBoardId);
+  const tokens        = useTokens(data.selectedBoardId);
 
   const colField   = config.fields.find(f => f.startsWith('column:'));
   const colTypes   = colField ? colField.replace('column:', '').split('|') : null;
@@ -426,12 +450,30 @@ function TemplateFields({ data, updateNodeData, color, t }) {
     return board?.columns?.find(c => c.id === data.selectedColumnId)?.type || null;
   }, [boards, data.selectedBoardId, data.selectedColumnId]);
 
+  const handleWorkspaceChange = workspaceId => {
+    // Reset board and downstream when workspace changes
+    updateNodeData(data.id, {
+      selectedWorkspaceId: workspaceId,
+      selectedBoardId:     '',
+      boardName:           '',
+      selectedColumnId:    '',
+      columnName:          '',
+      selectedGroupId:     '',
+      groupName:           '',
+      value:               '',
+    });
+  };
+
   const handleBoardChange = boardId => {
     const board = boardOpts.find(b => b.value === boardId);
     updateNodeData(data.id, {
-      selectedBoardId: boardId, boardName: board?.label || '',
-      selectedColumnId: '', columnName: '', selectedGroupId: '',
-      groupName: '', value: '',
+      selectedBoardId:  boardId,
+      boardName:        board?.label || '',
+      selectedColumnId: '',
+      columnName:       '',
+      selectedGroupId:  '',
+      groupName:        '',
+      value:            '',
     });
   };
 
@@ -450,6 +492,26 @@ function TemplateFields({ data, updateNodeData, color, t }) {
 
   return (
     <div>
+      {/* WORKSPACE — always shown when board is needed */}
+      {fields.includes('board') && (
+        <>
+          <FieldLabel text="Workspace" color={color} />
+          <SearchableSelect
+            value={data.selectedWorkspaceId || '__all__'}
+            onChange={handleWorkspaceChange}
+            options={workspaceOpts}
+            placeholder="Select workspace..."
+            color={color}
+          />
+          {/* Board count indicator */}
+          {data.selectedWorkspaceId && data.selectedWorkspaceId !== '__all__' && (
+            <div style={{ color: color + '88', fontSize: 9, marginTop: 3, textAlign: 'right' }}>
+              {boardOpts.length} board{boardOpts.length !== 1 ? 's' : ''} in this workspace
+            </div>
+          )}
+        </>
+      )}
+
       {/* BOARD */}
       {fields.includes('board') && (
         <>
