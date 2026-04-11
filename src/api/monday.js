@@ -416,23 +416,6 @@ export async function getBoardAutomations(boardIds, token) {
   return data.boards || [];
 }
 
-// ─────────────────────────────────────────────
-// GET WORKSPACES
-// ─────────────────────────────────────────────
-export async function getWorkspaces(token) {
-  const query = `
-    query {
-      workspaces {
-        id
-        name
-        kind
-        description
-      }
-    }
-  `;
-  const data = await mondayQuery(query, {}, token);
-  return data.workspaces || [];
-}
 
 // ─────────────────────────────────────────────
 // GET CONNECTED BOARDS (via mirror/linked columns)
