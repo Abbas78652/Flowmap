@@ -50,49 +50,63 @@ export async function getWorkspaces(token) {
 }
 
 // ─────────────────────────────────────────────
-// GET ALL BOARDS — paginated, filtered
+// GET ALL BOARDS — fetch all pages, no filtering by board_kind
+// monday.com API: max 500 per request, page-based pagination
 // ─────────────────────────────────────────────
 export async function getBoards(token) {
-  // Fetch first page
   let allBoards = [];
-  let page = 1;
-  const limit = 100;
+  let page      = 1;
+  const limit   = 500; // max allowed by monday.com
 
   while (true) {
     const query = `
       query GetBoards($limit: Int!, $page: Int!) {
         boards(limit: $limit, page: $page, order_by: created_at) {
-          id name state board_kind
+          id
+          name
+          state
+          board_kind
           columns { id title type settings_str }
-          groups { id title color }
+          groups  { id title color }
           workspace { id name }
         }
       }
     `;
-    const data = await mondayQuery(query, { limit, page }, token);
-    const batch = data.boards || [];
+
+    let batch = [];
+    try {
+      const data = await mondayQuery(query, { limit, page }, token);
+      batch = data.boards || [];
+    } catch (err) {
+      console.error(`Error fetching boards page ${page}:`, err.message);
+      break;
+    }
+
     allBoards = [...allBoards, ...batch];
 
-    // Stop if we got fewer than limit (last page)
+    // If fewer results than limit returned, we've reached the last page
     if (batch.length < limit) break;
-    // Safety cap at 10 pages (1000 boards)
-    if (page >= 10) break;
+    // Safety cap — 20 pages × 500 = 10,000 boards max
+    if (page >= 20) break;
     page++;
   }
 
-  // Filter:
-  // 1. Only active boards
-  // 2. Remove subitem boards (board_kind = 'sub_items_board' or name starts with 'Subitems of')
-  // 3. Remove share/template boards
-  // 4. Must have a workspace
-  return allBoards.filter(b =>
-    b.state === 'active' &&
-    b.board_kind !== 'share' &&
-    b.board_kind !== 'sub_items_board' &&
-    !b.name.startsWith('Subitems of') &&
-    b.workspace !== null &&
-    b.workspace !== undefined
-  );
+  // Filter rules:
+  // ✅ Keep: active boards with a workspace
+  // ❌ Remove: archived, deleted
+  // ❌ Remove: subitem boards (board_kind = 'sub_items_board')
+  // ❌ Remove: boards named "Subitems of X"
+  // ❌ Remove: share boards (monday.com workflow/template boards)
+  // ❌ Remove: boards with no name
+  return allBoards.filter(b => {
+    if (!b.name || b.name.trim() === '')         return false;
+    if (b.state !== 'active')                    return false;
+    if (b.board_kind === 'sub_items_board')       return false;
+    if (b.board_kind === 'share')                 return false;
+    if (b.name.startsWith('Subitems of '))        return false;
+    if (!b.workspace)                             return false;
+    return true;
+  });
 }
 
 // ─────────────────────────────────────────────
