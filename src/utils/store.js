@@ -1,5 +1,5 @@
 /* eslint-disable no-unused-vars */
-// src/utils/store.js
+// src/utils/store.js — Supabase-backed flow storage
 import { create } from 'zustand';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
@@ -7,15 +7,32 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001'
 // Restore draft flow from localStorage on startup
 const savedDraft = JSON.parse(localStorage.getItem('flowmap_draft') || 'null');
 
+// ─────────────────────────────────────────────
+// API HELPERS
+// ─────────────────────────────────────────────
+async function apiFetch(path, options = {}, token) {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  return data;
+}
+
 export const useStore = create((set, get) => ({
   // ── Auth ──
-  token:   null,
-  user:    null,
+  token:    null,
+  user:     null,
   setToken: token => set({ token }),
   setUser:  user  => set({ user }),
   logout:   () => {
     localStorage.removeItem('flowmap_token');
-    set({ token: null, user: null, nodes: [], edges: [], auditResult: null });
+    localStorage.removeItem('flowmap_draft');
+    set({ token: null, user: null, nodes: [], edges: [], auditResult: null, savedFlows: [] });
   },
 
   // ── Theme ──
@@ -36,24 +53,23 @@ export const useStore = create((set, get) => ({
   workspaces:    [],
   setWorkspaces: workspaces => set({ workspaces }),
 
-  // ── Workspace users (for notify/assign) ──
+  // ── Workspace users ──
   workspaceUsers:    [],
   setWorkspaceUsers: users => set({ workspaceUsers: users }),
 
   // ── Boards ──
-  boards:    [],
-  setBoards: boards => set({ boards }),
-  boardsLoading: false,
+  boards:          [],
+  boardsLoading:   false,
+  setBoards:       boards => set({ boards }),
   setBoardsLoading: v => set({ boardsLoading: v }),
 
-  // ── Flow canvas — restored from draft on startup ──
-  nodes:    savedDraft?.nodes || [],
-  edges:    savedDraft?.edges || [],
-  currentFlowName: savedDraft?.name || 'Untitled Flow',
+  // ── Flow canvas ──
+  nodes:           savedDraft?.nodes || [],
+  edges:           savedDraft?.edges || [],
+  currentFlowName: savedDraft?.name  || 'Untitled Flow',
 
   setNodes: nodes => {
     set({ nodes });
-    // Auto-save draft to localStorage
     const { edges, currentFlowName } = get();
     localStorage.setItem('flowmap_draft', JSON.stringify({ nodes, edges, name: currentFlowName }));
   },
@@ -85,13 +101,45 @@ export const useStore = create((set, get) => ({
     localStorage.setItem('flowmap_draft', JSON.stringify({ nodes, edges, name }));
   },
 
-  // ── Saved flows ──
-  savedFlows: JSON.parse(localStorage.getItem('flowmap_flows') || '[]'),
+  // ── Saved flows — Supabase backed ──
+  savedFlows:      JSON.parse(localStorage.getItem('flowmap_flows') || '[]'),
+  flowsLoading:    false,
+  setFlowsLoading: v => set({ flowsLoading: v }),
 
-  saveFlow: (name) => {
-    const { nodes, edges, savedFlows } = get();
-    const existing = savedFlows.find(f => f.name === name);
-    const newFlow  = {
+  // Load flows from Supabase
+  fetchFlows: async () => {
+    const { token } = get();
+    if (!token) return;
+    set({ flowsLoading: true });
+    try {
+      const data = await apiFetch('/api/flows', {}, token);
+      if (data.flows) {
+        // Normalize Supabase flow format to match app format
+        const flows = data.flows.map(f => ({
+          id:          f.id,
+          name:        f.name,
+          nodes:       f.nodes || [],
+          edges:       f.edges || [],
+          active:      f.active || false,
+          webhookIds:  f.webhook_ids || [],
+          activatedAt: f.activated_at,
+          savedAt:     f.updated_at,
+        }));
+        set({ savedFlows: flows });
+        localStorage.setItem('flowmap_flows', JSON.stringify(flows));
+      }
+    } catch (err) {
+      console.error('Failed to fetch flows:', err);
+      // Fall back to localStorage
+    } finally {
+      set({ flowsLoading: false });
+    }
+  },
+
+  saveFlow: async (name) => {
+    const { nodes, edges, savedFlows, token } = get();
+    const existing  = savedFlows.find(f => f.name === name);
+    const newFlow   = {
       id:      existing?.id || `flow-${Date.now()}`,
       name,
       nodes,
@@ -99,11 +147,25 @@ export const useStore = create((set, get) => ({
       active:  existing?.active  || false,
       savedAt: new Date().toISOString(),
     };
+
+    // Optimistic update
     const updated = existing
       ? savedFlows.map(f => f.id === newFlow.id ? newFlow : f)
       : [...savedFlows, newFlow];
     localStorage.setItem('flowmap_flows', JSON.stringify(updated));
     set({ savedFlows: updated, currentFlowName: name });
+
+    // Sync to Supabase
+    if (token) {
+      try {
+        await apiFetch('/api/flows/save', {
+          method: 'POST',
+          body: JSON.stringify({ flow: newFlow }),
+        }, token);
+      } catch (err) {
+        console.error('Supabase save failed:', err);
+      }
+    }
   },
 
   loadFlow: (flow) => {
@@ -119,18 +181,37 @@ export const useStore = create((set, get) => ({
     }));
   },
 
-  deleteFlow: (flowId) => {
-    const updated = get().savedFlows.filter(f => f.id !== flowId);
+  deleteFlow: async (flowId) => {
+    const { savedFlows, token } = get();
+    const updated = savedFlows.filter(f => f.id !== flowId);
     localStorage.setItem('flowmap_flows', JSON.stringify(updated));
     set({ savedFlows: updated });
+    if (token) {
+      try {
+        await apiFetch(`/api/flows/${flowId}`, { method: 'DELETE' }, token);
+      } catch (err) {
+        console.error('Supabase delete failed:', err);
+      }
+    }
   },
 
-  renameFlow: (flowId, newName) => {
-    const updated = get().savedFlows.map(f =>
-      f.id === flowId ? { ...f, name: newName } : f
-    );
+  renameFlow: async (flowId, newName) => {
+    const { savedFlows, token } = get();
+    const updated = savedFlows.map(f => f.id === flowId ? { ...f, name: newName } : f);
     localStorage.setItem('flowmap_flows', JSON.stringify(updated));
     set({ savedFlows: updated });
+    // Save updated flow to Supabase
+    const flow = updated.find(f => f.id === flowId);
+    if (flow && token) {
+      try {
+        await apiFetch('/api/flows/save', {
+          method: 'POST',
+          body: JSON.stringify({ flow }),
+        }, token);
+      } catch (err) {
+        console.error('Supabase rename failed:', err);
+      }
+    }
   },
 
   // ── ACTIVATE FLOW ──
@@ -140,13 +221,11 @@ export const useStore = create((set, get) => ({
     if (!flow) return { success: false, error: 'Flow not found' };
     set({ activating: flowId });
     try {
-      const res = await fetch(`${BACKEND_URL}/api/flows/activate`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      const data = await apiFetch('/api/flows/activate', {
+        method: 'POST',
         body: JSON.stringify({ flow }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      }, token);
+      if (!data.success) {
         set({ activating: null });
         return { success: false, error: data.error || 'Activation failed', errors: data.errors };
       }
@@ -169,12 +248,10 @@ export const useStore = create((set, get) => ({
     const { savedFlows, token } = get();
     set({ activating: flowId });
     try {
-      const res = await fetch(`${BACKEND_URL}/api/flows/deactivate`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      const data = await apiFetch('/api/flows/deactivate', {
+        method: 'POST',
         body: JSON.stringify({ flowId }),
-      });
-      const data = await res.json();
+      }, token);
       const updated = savedFlows.map(f =>
         f.id === flowId ? { ...f, active: false, webhookIds: null } : f
       );

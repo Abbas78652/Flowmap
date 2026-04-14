@@ -1,7 +1,7 @@
 {
   "name": "flowmap-monday-app",
   "version": "1.0.0",
-  "description": "FlowMap – Visual Automation Orchestrator for monday.com",
+  "description": "FlowMap \u2013 Visual Automation Orchestrator for monday.com",
   "private": true,
   "scripts": {
     "start": "react-scripts start",
@@ -12,20 +12,21 @@
     "dev": "concurrently \"npm start\" \"npm run server\""
   },
   "dependencies": {
-    "ajv": "^8.18.0",
-    "axios": "^1.6.0",
-    "concurrently": "^8.2.0",
-    "cors": "^2.8.5",
-    "dagre": "^0.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "lucide-react": "^0.383.0",
+    "monday-sdk-js": "^0.3.7",
+    "reactflow": "^11.11.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "concurrently": "^8.2.0",
+    "zustand": "^4.5.0",
+    "dagre": "^0.8.5",
     "react-hot-toast": "^2.4.1",
-    "react-scripts": "^5.0.1",
-    "reactflow": "^11.11.4",
-    "zustand": "^4.5.0"
+    "lucide-react": "^0.383.0",
+    "@supabase/supabase-js": "^2.39.0"
   },
   "browserslist": {
     "production": [

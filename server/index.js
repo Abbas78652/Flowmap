@@ -1,20 +1,29 @@
-// server/index.js
-// FlowMap Backend — OAuth + monday API proxy + Webhook Engine + Action Executor
+// server/index.js — FlowMap Backend with Supabase persistence
+/* eslint-disable no-unused-vars */
 
 const express = require('express');
 const cors    = require('cors');
 const axios   = require('axios');
 require('dotenv').config();
 
-// Mailjet email sender
+// ─────────────────────────────────────────────
+// SUPABASE CLIENT
+// ─────────────────────────────────────────────
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
+// ─────────────────────────────────────────────
+// MAILJET EMAIL SENDER
+// ─────────────────────────────────────────────
 async function sendMailjetEmail({ to, subject, body }) {
   const apiKey    = process.env.MAILJET_API_KEY;
   const apiSecret = process.env.MAILJET_API_SECRET;
   const fromEmail = process.env.MAILJET_FROM_EMAIL || 'noreply@flowmap.app';
   const fromName  = process.env.MAILJET_FROM_NAME  || 'FlowMap Automation';
-
-  if (!apiKey || !apiSecret) throw new Error('Mailjet credentials not configured. Add MAILJET_API_KEY and MAILJET_API_SECRET to backend environment variables.');
-
+  if (!apiKey || !apiSecret) throw new Error('Mailjet credentials not configured.');
   const response = await axios.post(
     'https://api.mailjet.com/v3.1/send',
     {
@@ -31,62 +40,45 @@ async function sendMailjetEmail({ to, subject, body }) {
   return response.data;
 }
 
+// ─────────────────────────────────────────────
+// EXPRESS SETUP
+// ─────────────────────────────────────────────
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
-app.use(express.json());
-
-// ─────────────────────────────────────────────
-// IN-MEMORY FLOW STORE
-// In production this moves to a real DB (monday Document DB or Supabase)
-// Key: flowId, Value: { flow, token, webhookIds[] }
-// ─────────────────────────────────────────────
-const activeFlows = new Map();   // flowId → { flow, token, webhookIds }
-const execLogs    = new Map();   // flowId → [{ timestamp, status, message }]
+app.use(cors({ origin: '*', methods: ['GET','POST','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));
+app.use(express.json({ limit: '10mb' }));
 
 // ─────────────────────────────────────────────
 // HEALTH CHECK
 // ─────────────────────────────────────────────
 app.get('/health', (req, res) => {
-  res.json({
-    status:      'ok',
-    app:         'FlowMap',
-    version:     '1.0.0',
-    activeFlows: activeFlows.size,
-  });
+  res.json({ status: 'ok', app: 'FlowMap', version: '1.0.0', storage: 'supabase' });
 });
 
 // ─────────────────────────────────────────────
-// OAUTH — Step 1: Redirect to monday.com
+// OAUTH — monday.com
 // ─────────────────────────────────────────────
 app.get('/auth/monday', (req, res) => {
   const clientId    = process.env.REACT_APP_MONDAY_CLIENT_ID;
-  const redirectUri = encodeURIComponent(process.env.REDIRECT_URI);
-  res.redirect(`https://auth.monday.com/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code`);
+  const redirectUri = process.env.REDIRECT_URI;
+  const authUrl     = `https://auth.monday.com/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+  res.redirect(authUrl);
 });
 
-// ─────────────────────────────────────────────
-// OAUTH — Step 2: Exchange code for token
-// ─────────────────────────────────────────────
 app.get('/auth/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).json({ error: 'No code provided' });
-
   try {
-    const response = await axios.post(
-      'https://auth.monday.com/oauth2/token',
-      {
-        client_id:     process.env.REACT_APP_MONDAY_CLIENT_ID,
-        client_secret: process.env.MONDAY_CLIENT_SECRET,
-        code,
-        redirect_uri:  process.env.REDIRECT_URI,
-      },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
+    const response = await axios.post('https://auth.monday.com/oauth2/token', {
+      client_id:     process.env.REACT_APP_MONDAY_CLIENT_ID,
+      client_secret: process.env.MONDAY_CLIENT_SECRET,
+      code,
+      redirect_uri:  process.env.REDIRECT_URI,
+    });
     const { access_token } = response.data;
-    const frontendPort = process.env.FRONTEND_PORT || 3002;
-    res.redirect(`http://localhost:${frontendPort}?token=${access_token}`);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    res.redirect(`${frontendUrl}?token=${access_token}`);
   } catch (err) {
     console.error('OAuth error:', err.response?.data || err.message);
     res.status(500).json({ error: 'OAuth failed' });
@@ -94,19 +86,20 @@ app.get('/auth/callback', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// MONDAY API PROXY
+// MONDAY.COM API PROXY
 // ─────────────────────────────────────────────
 app.post('/api/monday', async (req, res) => {
-  const token            = req.headers['authorization']?.split(' ')[1];
-  const { query, variables } = req.body;
+  const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'No token' });
-
   try {
-    const response = await mondayAPI(query, variables, token);
-    res.json(response);
+    const response = await axios.post(
+      'https://api.monday.com/v2',
+      req.body,
+      { headers: { Authorization: token, 'Content-Type': 'application/json', 'API-Version': '2024-01' } }
+    );
+    res.json(response.data);
   } catch (err) {
-    console.error('monday API error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'monday API failed', details: err.response?.data });
+    res.status(err.response?.status || 500).json({ error: err.message });
   }
 });
 
@@ -115,14 +108,12 @@ app.post('/api/monday', async (req, res) => {
 // ─────────────────────────────────────────────
 app.post('/api/audit', async (req, res) => {
   const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: 'No prompt' });
-
   try {
     const response = await axios.post(
       'https://api.anthropic.com/v1/messages',
       {
         model:      'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
+        max_tokens: 1000,
         messages:   [{ role: 'user', content: prompt }],
       },
       {
@@ -133,650 +124,588 @@ app.post('/api/audit', async (req, res) => {
         },
       }
     );
-    res.json({ result: response.data?.content?.[0]?.text || 'No response' });
+    const result = response.data.content?.[0]?.text || 'No response';
+    res.json({ result });
   } catch (err) {
-    console.error('Anthropic error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'AI audit failed' });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ─────────────────────────────────────────────
-// ACTIVATE FLOW
-// Registers monday.com webhooks for every trigger node
+// FLOWS API — Supabase backed
+// ─────────────────────────────────────────────
+
+// Get all flows for a user
+app.get('/api/flows', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'No token' });
+  try {
+    const user = await getMondayUser(token);
+    const { data, error } = await supabase
+      .from('flows')
+      .select('*')
+      .eq('account_id', user.account.id)
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    res.json({ flows: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save / update a flow
+app.post('/api/flows/save', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'No token' });
+  const { flow } = req.body;
+  if (!flow) return res.status(400).json({ error: 'No flow provided' });
+  try {
+    const user = await getMondayUser(token);
+    const { data, error } = await supabase
+      .from('flows')
+      .upsert({
+        id:         flow.id,
+        user_id:    user.id,
+        account_id: user.account.id,
+        name:       flow.name,
+        nodes:      flow.nodes,
+        edges:      flow.edges,
+        active:     flow.active || false,
+        webhook_ids: flow.webhookIds || [],
+      }, { onConflict: 'id' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ success: true, flow: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a flow
+app.delete('/api/flows/:flowId', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'No token' });
+  try {
+    const user = await getMondayUser(token);
+    const { error } = await supabase
+      .from('flows')
+      .delete()
+      .eq('id', req.params.flowId)
+      .eq('user_id', user.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// ACTIVATE FLOW — register monday webhooks
 // ─────────────────────────────────────────────
 app.post('/api/flows/activate', async (req, res) => {
-  const token        = req.headers['authorization']?.split(' ')[1];
-  const { flow }     = req.body;
-
+  const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'No token' });
-  if (!flow)  return res.status(400).json({ error: 'No flow provided' });
+  const { flow } = req.body;
+  if (!flow) return res.status(400).json({ error: 'No flow provided' });
 
-  const triggerNodes = flow.nodes.filter(n => n.data?.nodeType === 'trigger');
-  if (triggerNodes.length === 0) {
-    return res.status(400).json({ error: 'Flow has no trigger nodes' });
-  }
+  const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || `http://localhost:${PORT}`;
+  const webhooks = [];
+  const errors   = [];
 
-  const webhookUrl = `${process.env.WEBHOOK_BASE_URL || `http://localhost:${PORT}`}/webhook/monday/${flow.id}`;
-  const registeredWebhooks = [];
-  const errors = [];
+  const triggerNodes = flow.nodes?.filter(n => n.data?.nodeType === 'trigger') || [];
+  if (triggerNodes.length === 0) return res.status(400).json({ success: false, error: 'No trigger nodes in flow' });
 
-  for (const trigger of triggerNodes) {
-    const boardId     = trigger.data?.selectedBoardId;
-    const triggerType = mapTriggerToWebhookEvent(trigger.data?.templateId);
+  for (const triggerNode of triggerNodes) {
+    const { templateId, selectedBoardId } = triggerNode.data || {};
+    if (!selectedBoardId) { errors.push(`Trigger "${triggerNode.data?.label}": no board selected`); continue; }
 
-    if (!boardId) {
-      errors.push(`Trigger "${trigger.data?.label}" has no board selected`);
-      continue;
-    }
-    if (!triggerType) {
-      errors.push(`Trigger "${trigger.data?.label}" type not supported for webhooks yet`);
-      continue;
-    }
+    const eventType = templateIdToEventType(templateId);
+    if (!eventType) { errors.push(`Trigger "${templateId}": not yet supported as webhook`); continue; }
 
     try {
       const mutation = `
-        mutation CreateWebhook($boardId: ID!, $url: String!, $event: WebhookEventType!) {
+        mutation($boardId: ID!, $url: String!, $event: WebhookEventType!) {
           create_webhook(board_id: $boardId, url: $url, event: $event) {
-            id
-            board_id
+            id board_id
           }
         }
       `;
-      const result = await mondayAPI(mutation, {
-        boardId: parseInt(boardId),
-        url:     webhookUrl,
-        event:   triggerType,
-      }, token);
-
-      const webhookId = result?.data?.create_webhook?.id;
-      if (webhookId) {
-        registeredWebhooks.push({ webhookId, boardId, triggerType, nodeId: trigger.id });
-        console.log(`✅ Webhook registered: ${webhookId} for board ${boardId} (${triggerType})`);
+      const url  = `${WEBHOOK_BASE_URL}/webhook/${flow.id}`;
+      const data = await mondayAPI(mutation, { boardId: selectedBoardId, url, event: eventType }, token);
+      if (data?.create_webhook?.id) {
+        webhooks.push({ id: data.create_webhook.id, boardId: selectedBoardId, event: eventType, nodeId: triggerNode.id });
       }
     } catch (err) {
-      console.error(`Webhook registration failed for board ${boardId}:`, err.message);
-      errors.push(`Failed to register webhook for board ${boardId}: ${err.message}`);
+      errors.push(`Webhook registration failed: ${err.message}`);
     }
   }
 
-  if (registeredWebhooks.length === 0) {
-    return res.status(500).json({ error: 'No webhooks could be registered', errors });
+  if (webhooks.length === 0 && errors.length > 0) {
+    return res.json({ success: false, error: errors[0], errors });
   }
 
-  // Store the active flow
-  activeFlows.set(flow.id, { flow, token, webhookIds: registeredWebhooks });
-  execLogs.set(flow.id, [{
-    timestamp: new Date().toISOString(),
-    status:    'activated',
-    message:   `Flow activated with ${registeredWebhooks.length} webhook(s)`,
-  }]);
+  // Store in Supabase
+  try {
+    const user = await getMondayUser(token);
+    await supabase.from('flows').upsert({
+      id:           flow.id,
+      user_id:      user.id,
+      account_id:   user.account.id,
+      name:         flow.name,
+      nodes:        flow.nodes,
+      edges:        flow.edges,
+      active:       true,
+      webhook_ids:  webhooks,
+      activated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+  } catch (err) {
+    console.error('Supabase save error:', err.message);
+  }
 
-  console.log(`🟢 Flow activated: ${flow.name} (${flow.id}) — ${registeredWebhooks.length} webhooks`);
-
-  res.json({
-    success:  true,
-    flowId:   flow.id,
-    webhooks: registeredWebhooks,
-    errors:   errors.length > 0 ? errors : undefined,
-  });
+  res.json({ success: true, webhooks, errors });
 });
 
 // ─────────────────────────────────────────────
-// DEACTIVATE FLOW
-// Removes all registered webhooks for the flow
+// DEACTIVATE FLOW — delete monday webhooks
 // ─────────────────────────────────────────────
 app.post('/api/flows/deactivate', async (req, res) => {
-  const token    = req.headers['authorization']?.split(' ')[1];
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'No token' });
   const { flowId } = req.body;
 
-  if (!token)  return res.status(401).json({ error: 'No token' });
-  if (!flowId) return res.status(400).json({ error: 'No flowId' });
+  try {
+    // Get flow from Supabase
+    const { data: flow } = await supabase.from('flows').select('*').eq('id', flowId).single();
 
-  const stored = activeFlows.get(flowId);
-  if (!stored) return res.json({ success: true, message: 'Flow was not active' });
-
-  const errors = [];
-  for (const wh of stored.webhookIds || []) {
-    try {
-      const mutation = `
-        mutation DeleteWebhook($webhookId: ID!) {
-          delete_webhook(id: $webhookId) { id }
+    if (flow?.webhook_ids?.length > 0) {
+      for (const wh of flow.webhook_ids) {
+        try {
+          const mutation = `mutation($id: ID!) { delete_webhook(id: $id) { id } }`;
+          await mondayAPI(mutation, { id: wh.id }, token);
+        } catch (err) {
+          console.error('Webhook delete error:', err.message);
         }
-      `;
-      await mondayAPI(mutation, { webhookId: wh.webhookId }, token);
-      console.log(`🗑 Webhook deleted: ${wh.webhookId}`);
-    } catch (err) {
-      console.error(`Failed to delete webhook ${wh.webhookId}:`, err.message);
-      errors.push(err.message);
+      }
     }
+
+    await supabase.from('flows').update({ active: false, webhook_ids: [] }).eq('id', flowId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  activeFlows.delete(flowId);
-  addLog(flowId, 'deactivated', 'Flow deactivated — all webhooks removed');
-
-  res.json({ success: true, errors: errors.length > 0 ? errors : undefined });
 });
 
 // ─────────────────────────────────────────────
-// GET EXECUTION LOGS
+// WEBHOOK RECEIVER — executes flow when monday fires
 // ─────────────────────────────────────────────
-app.get('/api/flows/:flowId/logs', (req, res) => {
-  const logs = execLogs.get(req.params.flowId) || [];
-  res.json({ logs: logs.slice(-50) }); // last 50 entries
-});
+app.post('/webhook/:flowId', async (req, res) => {
+  // monday.com challenge verification
+  if (req.body?.challenge) return res.json({ challenge: req.body.challenge });
 
-// ─────────────────────────────────────────────
-// WEBHOOK RECEIVER
-// monday.com sends events here when triggers fire
-// ─────────────────────────────────────────────
-app.post('/webhook/monday/:flowId', async (req, res) => {
-  // Monday challenge verification
-  const { challenge } = req.body;
-  if (challenge) return res.json({ challenge });
+  res.json({ received: true });
 
   const { flowId } = req.params;
-  const event      = req.body?.event;
+  const event      = req.body?.event || req.body;
 
-  if (!event) return res.status(400).json({ error: 'No event' });
+  try {
+    // Load flow from Supabase
+    const { data: flow, error } = await supabase.from('flows').select('*').eq('id', flowId).single();
+    if (error || !flow || !flow.active) return;
 
-  console.log(`\n⚡ Webhook received for flow ${flowId}:`, event.type);
+    // Get stored token from subscriptions or use a cached approach
+    // For now get token from monday's event context
+    const token = await getTokenForAccount(flow.account_id);
+    if (!token) { console.error('No token found for account', flow.account_id); return; }
 
-  const stored = activeFlows.get(flowId);
-  if (!stored) {
-    console.log(`Flow ${flowId} not found in active flows`);
-    return res.status(404).json({ error: 'Flow not active' });
+    await executeFlow({ flow, event, token });
+  } catch (err) {
+    console.error('Webhook execution error:', err.message);
   }
-
-  // Acknowledge immediately (monday requires fast response)
-  res.json({ status: 'received' });
-
-  // Execute flow asynchronously
-  executeFlow(stored.flow, stored.token, event).catch(err => {
-    console.error(`Flow execution error for ${flowId}:`, err.message);
-    addLog(flowId, 'error', `Execution failed: ${err.message}`);
-  });
 });
 
 // ─────────────────────────────────────────────
-// FLOW EXECUTION ENGINE
-// Evaluates conditions and runs actions
+// EXECUTION LOGS
 // ─────────────────────────────────────────────
-async function executeFlow(flow, token, event) {
-  const flowId = flow.id;
-  console.log(`\n🔄 Executing flow: ${flow.name}`);
-  addLog(flowId, 'triggered', `Triggered by event: ${event.type} on board ${event.boardId}`);
+app.get('/api/flows/:flowId/logs', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('execution_logs')
+      .select('*')
+      .eq('flow_id', req.params.flowId)
+      .order('timestamp', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    res.json({ logs: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
+// ─────────────────────────────────────────────
+// WORKFLOW BLOCK ENDPOINTS (for "something" fix)
+// ─────────────────────────────────────────────
+
+// monday calls this when user adds our automation block to a workflow
+app.post('/workflow/subscribe', async (req, res) => {
+  const { payload } = req.body;
+  const { webhookUrl, subscriptionId, inputFields, inboundFieldValues } = payload || {};
+
+  try {
+    const fields = inputFields || inboundFieldValues || {};
+    await supabase.from('subscriptions').upsert({
+      id:          String(subscriptionId),
+      flow_id:     null,
+      webhook_url: webhookUrl,
+      input_fields: fields,
+      board_id:    fields.boardId || fields.board_id || null,
+    }, { onConflict: 'id' });
+
+    console.log(`Workflow block subscribed: ${subscriptionId}`, fields);
+    res.status(200).json({ webhookId: subscriptionId });
+  } catch (err) {
+    console.error('Subscribe error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// monday calls this when user removes our automation block
+app.post('/workflow/unsubscribe', async (req, res) => {
+  const { payload } = req.body;
+  const { webhookId } = payload || {};
+  try {
+    await supabase.from('subscriptions').delete().eq('id', String(webhookId));
+    console.log(`Workflow block unsubscribed: ${webhookId}`);
+    res.status(200).json({});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// monday calls this to execute our action block
+app.post('/workflow/execute', async (req, res) => {
+  console.log('Workflow execute:', JSON.stringify(req.body));
+  res.status(200).json({ success: true });
+});
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+
+// Token cache — stores token per account (populated on webhook activation)
+const tokenCache = new Map();
+
+async function getTokenForAccount(accountId) {
+  return tokenCache.get(accountId) || null;
+}
+
+async function getMondayUser(token) {
+  const res = await axios.post(
+    'https://api.monday.com/v2',
+    { query: `query { me { id name email account { id name } } }` },
+    { headers: { Authorization: token, 'Content-Type': 'application/json' } }
+  );
+  const user = res.data?.data?.me;
+  if (user) tokenCache.set(String(user.account.id), token);
+  return user;
+}
+
+async function mondayAPI(query, variables, token) {
+  const res = await axios.post(
+    'https://api.monday.com/v2',
+    { query, variables },
+    { headers: { Authorization: token, 'Content-Type': 'application/json', 'API-Version': '2024-01' } }
+  );
+  if (res.data?.errors) throw new Error(res.data.errors.map(e => e.message).join(', '));
+  return res.data?.data;
+}
+
+function templateIdToEventType(templateId) {
+  const map = {
+    status_changed:  'change_status_column_value',
+    item_created:    'create_pulse',
+    column_changes:  'change_column_value',
+    item_assigned:   'change_column_value',
+    subitem_created: 'create_subitem',
+    item_moved:      'move_pulse_into_board',
+    date_arrives:    'item_archived',
+  };
+  return map[templateId] || null;
+}
+
+async function getItemColumnValue(itemId, columnId, token) {
+  try {
+    const q = `query($itemId: [ID!], $colId: [String!]) {
+      items(ids: $itemId) { column_values(ids: $colId) { value text } }
+    }`;
+    const data = await mondayAPI(q, { itemId: [String(itemId)], colId: [columnId] }, token);
+    const raw  = data?.items?.[0]?.column_values?.[0]?.value;
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+// ─────────────────────────────────────────────
+// FLOW EXECUTOR
+// ─────────────────────────────────────────────
+async function executeFlow({ flow, event, token }) {
   const nodes = flow.nodes || [];
   const edges = flow.edges || [];
 
-  // Find which trigger node fired
-  const triggerNode = findFiredTrigger(nodes, event);
-  if (!triggerNode) {
-    addLog(flowId, 'skipped', 'No matching trigger node for this event');
-    return;
-  }
-
-  console.log(`  ✅ Trigger matched: ${triggerNode.data.label}`);
-
-  // Walk the graph from trigger → conditions → actions
-  const chain = buildExecutionChain(triggerNode, nodes, edges);
-  console.log(`  📋 Execution chain: ${chain.map(n => n.data.label).join(' → ')}`);
-
-  // Evaluate conditions
-  for (const node of chain) {
-    if (node.data.nodeType === 'condition') {
-      const passed = await evaluateCondition(node, event, token);
-      if (!passed) {
-        const msg = `Condition "${node.data.label}" not met — flow stopped`;
-        console.log(`  🚫 ${msg}`);
-        addLog(flowId, 'condition_failed', msg);
-        return;
-      }
-      console.log(`  ✅ Condition passed: ${node.data.label}`);
-      addLog(flowId, 'condition_passed', `Condition "${node.data.label}" passed`);
-    }
-  }
-
-  // Execute actions
-  for (const node of chain) {
-    if (node.data.nodeType === 'action') {
-      try {
-        const result = await executeAction(node, event, token);
-        const msg = `Action "${node.data.label}" executed successfully${result ? `: ${result}` : ''}`;
-        console.log(`  ⚙️  ${msg}`);
-        addLog(flowId, 'action_success', msg);
-      } catch (err) {
-        const msg = `Action "${node.data.label}" failed: ${err.message}`;
-        console.error(`  ❌ ${msg}`);
-        addLog(flowId, 'action_error', msg);
-      }
-    }
-  }
-
-  addLog(flowId, 'completed', 'Flow execution completed');
-  console.log(`  ✅ Flow execution complete: ${flow.name}`);
-}
-
-// ─────────────────────────────────────────────
-// FIND WHICH TRIGGER NODE MATCHES THE EVENT
-// ─────────────────────────────────────────────
-function findFiredTrigger(nodes, event) {
   const triggerNodes = nodes.filter(n => n.data?.nodeType === 'trigger');
+  let matchedTrigger = null;
 
   for (const t of triggerNodes) {
-    const expectedEvent = mapTriggerToWebhookEvent(t.data?.templateId);
-    const boardMatches  = !t.data?.selectedBoardId || t.data.selectedBoardId == event.boardId;
-
-    if (!boardMatches) continue;
-
-    // For status triggers, check if the column and value match
     if (t.data?.templateId === 'status_changed') {
-      const colMatches = !t.data?.selectedColumnId || t.data.selectedColumnId == event.columnId;
-      // Match by index (stored value) OR by label text (fallback)
+      const colMatches = !t.data?.selectedColumnId || t.data.selectedColumnId === event.columnId;
       const valMatches = !t.data?.value ||
         String(event.value?.index) === String(t.data.value) ||
         event.value?.label?.text === t.data.value;
-      if (colMatches && valMatches) return t;
+      if (colMatches && valMatches) { matchedTrigger = t; break; }
+    } else {
+      matchedTrigger = t;
+      break;
+    }
+  }
+
+  if (!matchedTrigger) {
+    await logExecution(flow.id, flow.account_id, 'trigger_no_match', 'Trigger condition not met — skipped');
+    return;
+  }
+
+  await logExecution(flow.id, flow.account_id, 'trigger_matched', `Trigger fired: ${matchedTrigger.data?.label}`);
+
+  // BFS traversal from trigger
+  const visited = new Set();
+  const queue   = [matchedTrigger.id];
+
+  while (queue.length > 0) {
+    const nodeId    = queue.shift();
+    if (visited.has(nodeId)) continue;
+    visited.add(nodeId);
+
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node || node.data?.nodeType === 'trigger') {
+      const nextIds = edges.filter(e => e.source === nodeId).map(e => e.target);
+      queue.push(...nextIds);
       continue;
     }
 
-    if (expectedEvent && event.type === expectedEvent) return t;
-    if (event.type === 'change_column_value' && t.data?.templateId === 'column_changes') return t;
-    if (event.type === 'create_item'         && t.data?.templateId === 'item_created')  return t;
-    if (event.type === 'change_status'       && t.data?.templateId === 'status_changed') return t;
-  }
+    if (node.data?.nodeType === 'condition') {
+      const passes = await evaluateCondition(node, event, token);
+      if (!passes) {
+        await logExecution(flow.id, flow.account_id, 'condition_failed', `Condition "${node.data?.label}" not met — stopped`);
+        break;
+      }
+      await logExecution(flow.id, flow.account_id, 'condition_passed', `Condition "${node.data?.label}" passed`);
+    }
 
-  return null;
+    if (node.data?.nodeType === 'action') {
+      try {
+        const result = await executeAction(node, event, token);
+        await logExecution(flow.id, flow.account_id, 'action_success', `✅ ${node.data?.label}: ${result}`);
+      } catch (err) {
+        await logExecution(flow.id, flow.account_id, 'action_error', `❌ ${node.data?.label}: ${err.message}`);
+      }
+    }
+
+    const nextIds = edges.filter(e => e.source === nodeId).map(e => e.target);
+    queue.push(...nextIds);
+  }
 }
 
-// ─────────────────────────────────────────────
-// BUILD EXECUTION CHAIN
-// Traverses the graph from trigger to end
-// ─────────────────────────────────────────────
-function buildExecutionChain(startNode, nodes, edges) {
-  const chain   = [];
-  const visited = new Set();
-  let   current = startNode;
-
-  while (current && !visited.has(current.id)) {
-    visited.add(current.id);
-    if (current.data.nodeType !== 'trigger') chain.push(current);
-
-    // Find the next connected node
-    const outgoingEdge = edges.find(e => e.source === current.id);
-    if (!outgoingEdge) break;
-    current = nodes.find(n => n.id === outgoingEdge.target);
+async function logExecution(flowId, accountId, status, message) {
+  try {
+    await supabase.from('execution_logs').insert({ flow_id: flowId, account_id: accountId, status, message });
+  } catch (err) {
+    console.error('Log error:', err.message);
   }
-
-  return chain;
 }
 
-// ─────────────────────────────────────────────
-// CONDITION EVALUATOR
-// ─────────────────────────────────────────────
 async function evaluateCondition(node, event, token) {
-  const { templateId, selectedBoardId, selectedColumnId, value, selectedGroupId } = node.data;
-
-  switch (templateId) {
-    case 'no_condition':
-      return true;
-
-    case 'status_is': {
-      if (!selectedColumnId || !value) return true;
-      const itemData = await getItemColumnValue(event.pulseId, selectedColumnId, token);
-      return itemData?.text === value;
-    }
-
-    case 'group_is': {
-      if (!selectedGroupId) return true;
-      const item = await getItem(event.pulseId, token);
-      return item?.group?.id === selectedGroupId;
-    }
-
-    case 'checkbox_checked': {
-      if (!selectedColumnId) return true;
-      const colVal = await getItemColumnValue(event.pulseId, selectedColumnId, token);
-      const checked = value === 'checked';
-      return colVal?.value === (checked ? 'true' : null);
-    }
-
-    case 'number_greater': {
-      if (!selectedColumnId || !value) return true;
-      const colVal = await getItemColumnValue(event.pulseId, selectedColumnId, token);
-      return parseFloat(colVal?.text || 0) > parseFloat(value);
-    }
-
-    case 'person_is': {
-      if (!selectedColumnId || !value) return true;
-      const colVal = await getItemColumnValue(event.pulseId, selectedColumnId, token);
-      return (colVal?.text || '').toLowerCase().includes(value.toLowerCase());
-    }
-
-    case 'column_contains': {
-      if (!selectedColumnId || !value) return true;
-      const colVal = await getItemColumnValue(event.pulseId, selectedColumnId, token);
-      return (colVal?.text || '').toLowerCase().includes(value.toLowerCase());
-    }
-
-    case 'date_is_past': {
-      if (!selectedColumnId) return true;
-      const colVal = await getItemColumnValue(event.pulseId, selectedColumnId, token);
-      if (!colVal?.text) return false;
-      return new Date(colVal.text) < new Date();
-    }
-
-    default:
-      return true;
+  const { templateId, selectedColumnId, value, selectedBoardId } = node.data || {};
+  if (templateId === 'no_condition') return true;
+  if (templateId === 'status_is') {
+    const colVal = await getItemColumnValue(event.pulseId, selectedColumnId, token);
+    return String(colVal?.index) === String(value) || colVal?.label?.text === value;
   }
+  if (templateId === 'checkbox_checked') {
+    const colVal = await getItemColumnValue(event.pulseId, selectedColumnId, token);
+    return colVal?.checked === true || colVal === true;
+  }
+  return true;
 }
 
-// ─────────────────────────────────────────────
-// ACTION EXECUTOR
-// Runs the actual monday.com API calls
-// ─────────────────────────────────────────────
+function resolveTokens(text, event) {
+  if (!text) return text;
+  return text
+    .replace(/\{Item Name\}/g,    event.pulseName || '')
+    .replace(/\{Item ID\}/g,      event.pulseId   || '')
+    .replace(/\{Board Name\}/g,   event.boardName || '')
+    .replace(/\{Group Name\}/g,   event.groupId   || '')
+    .replace(/\{Today\}/g,        new Date().toISOString().split('T')[0])
+    .replace(/\{Triggered By\}/g, event.userId    || '');
+}
+
 async function executeAction(node, event, token) {
-  const {
-    templateId, selectedBoardId, selectedGroupId, selectedColumnId,
-    value, itemName, message, emailTo, emailSubject,
-  } = node.data;
+  const { templateId, selectedBoardId, selectedColumnId, selectedGroupId,
+          selectedPersonId, value, message, itemName, emailTo, emailSubject,
+          dateOffset } = node.data || {};
 
-  // Resolve dynamic tokens in text fields
-  const resolveTokens = (text) => {
-    if (!text) return text;
-    return text
-      .replace(/\{Item Name\}/g,    event.pulseName  || '')
-      .replace(/\{Item ID\}/g,      event.pulseId    || '')
-      .replace(/\{Board Name\}/g,   event.boardName  || '')
-      .replace(/\{Group Name\}/g,   event.groupName  || '')
-      .replace(/\{Today\}/g,        new Date().toISOString().split('T')[0])
-      .replace(/\{Triggered By\}/g, event.userName   || '');
-  };
-
-  const targetBoard = selectedBoardId ? parseInt(selectedBoardId) : parseInt(event.boardId);
+  const targetBoard = selectedBoardId || event.boardId;
+  const msg         = resolveTokens(message, event);
+  const iName       = resolveTokens(itemName, event);
 
   switch (templateId) {
 
-    // ── SEND EMAIL via Mailjet ──
-    case 'send_email': {
-      const to      = resolveTokens(node.data?.emailTo);
-      const subject = resolveTokens(node.data?.emailSubject) || 'Notification from FlowMap';
-      const body    = resolveTokens(node.data?.message) || `Automation triggered for: ${event.pulseName}`;
-
-      if (!to) return 'No recipient email — skipped';
-
-      await sendMailjetEmail({ to, subject, body });
-      return `Email sent to ${to}`;
-    }
-
-    // ── CREATE ITEM ──
     case 'create_item': {
-      const name    = resolveTokens(itemName) || `New Item from ${event.pulseName}`;
-      const groupId = selectedGroupId || null;
-      const mutation = groupId
-        ? `mutation($boardId: ID!, $groupId: String!, $itemName: String!) {
-            create_item(board_id: $boardId, group_id: $groupId, item_name: $itemName) { id name }
-          }`
-        : `mutation($boardId: ID!, $itemName: String!) {
-            create_item(board_id: $boardId, item_name: $itemName) { id name }
-          }`;
-      const vars = groupId
-        ? { boardId: targetBoard, groupId, itemName: name }
-        : { boardId: targetBoard, itemName: name };
-      const result = await mondayAPI(mutation, vars, token);
-      const newItem = result?.data?.create_item;
-      return `Created item "${newItem?.name}" (ID: ${newItem?.id})`;
+      if (!targetBoard) return 'No board selected — skipped';
+      const mutation = `
+        mutation($boardId: ID!, $itemName: String!, $groupId: String) {
+          create_item(board_id: $boardId, item_name: $itemName, group_id: $groupId) { id }
+        }
+      `;
+      const data = await mondayAPI(mutation, {
+        boardId: targetBoard, itemName: iName || `Item from FlowMap`, groupId: selectedGroupId || null
+      }, token);
+      return `Item created: ${data?.create_item?.id}`;
     }
 
-    // ── NOTIFY SOMEONE ──
     case 'notify_someone': {
-      const text = resolveTokens(node.data?.message) || `FlowMap automation triggered for: ${event.pulseName}`;
-      // Use selectedPersonId (from person picker) or fall back to triggering user
-      const userId = node.data?.selectedPersonId || event.userId;
-      if (!userId) return 'No recipient found — notification skipped';
+      const text   = msg || `FlowMap automation triggered for: ${event.pulseName}`;
+      const userId = selectedPersonId || event.userId;
+      if (!userId) return 'No recipient — skipped';
       const mutation = `
         mutation($userId: ID!, $text: String!, $itemId: ID!) {
-          create_notification(user_id: $userId, target_id: $itemId, text: $text, target_type: Project) {
-            text
-          }
+          create_notification(user_id: $userId, target_id: $itemId, text: $text, target_type: Project) { text }
         }
       `;
       await mondayAPI(mutation, { userId: parseInt(userId), text, itemId: parseInt(event.pulseId) }, token);
       return `Notification sent to user ${userId}`;
     }
 
-    // ── SET STATUS ──
+    case 'send_email': {
+      const to      = resolveTokens(emailTo, event);
+      const subject = resolveTokens(emailSubject, event) || 'FlowMap Automation Notification';
+      const body    = msg || `Automation triggered for: ${event.pulseName}`;
+      if (!to) return 'No recipient email — skipped';
+      await sendMailjetEmail({ to, subject, body });
+      return `Email sent to ${to}`;
+    }
+
     case 'set_status': {
       if (!selectedColumnId || !value) return 'No column or value — skipped';
-      // value is the status index (e.g. "1", "2") stored from settings.labels
-      // monday change_column_value expects: { "index": N }
-      const mutation = `
-        mutation($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
-          change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
-            id
-          }
-        }
-      `;
-      await mondayAPI(mutation, {
-        boardId:  targetBoard,
-        itemId:   parseInt(event.pulseId),
-        columnId: selectedColumnId,
-        value:    JSON.stringify({ index: parseInt(value) }),
-      }, token);
-      return `Status set (index: ${value})`;
-    }
-
-    // ── ASSIGN PERSON ──
-    case 'assign_person': {
-      if (!selectedColumnId) return 'No column selected — skipped';
-      // Use selectedPersonId from person picker
-      const personId = node.data?.selectedPersonId || value;
-      if (!personId) return 'No person selected — skipped';
-      const mutation = `
-        mutation($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
-          change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
-            id
-          }
-        }
-      `;
-      await mondayAPI(mutation, {
-        boardId:  targetBoard,
-        itemId:   parseInt(event.pulseId),
-        columnId: selectedColumnId,
-        value:    JSON.stringify({ personsAndTeams: [{ id: parseInt(personId), kind: 'person' }] }),
-      }, token);
-      return `Person ${personId} assigned`;
-    }
-
-    // ── SET DATE ──
-    case 'set_date': {
-      if (!selectedColumnId) return 'No column — skipped';
-      const dateVal = resolveDate(value || node.data?.dateOffset);
       const mutation = `
         mutation($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
           change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) { id }
         }
       `;
       await mondayAPI(mutation, {
-        boardId:  targetBoard,
-        itemId:   parseInt(event.pulseId),
-        columnId: selectedColumnId,
-        value:    JSON.stringify({ date: dateVal }),
+        boardId:  targetBoard, itemId: parseInt(event.pulseId),
+        columnId: selectedColumnId, value: JSON.stringify({ index: parseInt(value) }),
       }, token);
-      return `Date set to ${dateVal}`;
+      return `Status set (index: ${value})`;
     }
 
-    // ── MOVE ITEM TO GROUP ──
-    case 'move_item': {
-      if (!selectedGroupId) return 'No group selected — skipped';
+    case 'assign_person': {
+      if (!selectedColumnId) return 'No column — skipped';
+      const personId = selectedPersonId || value;
+      if (!personId) return 'No person selected — skipped';
       const mutation = `
-        mutation($itemId: ID!, $groupId: String!) {
-          move_item_to_group(item_id: $itemId, group_id: $groupId) { id }
+        mutation($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
+          change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) { id }
         }
       `;
       await mondayAPI(mutation, {
-        itemId:  parseInt(event.pulseId),
-        groupId: selectedGroupId,
+        boardId:  targetBoard, itemId: parseInt(event.pulseId),
+        columnId: selectedColumnId,
+        value:    JSON.stringify({ personsAndTeams: [{ id: parseInt(personId), kind: 'person' }] }),
       }, token);
+      return `Person ${personId} assigned`;
+    }
+
+    case 'move_item': {
+      if (!selectedGroupId) return 'No group selected — skipped';
+      const mutation = `
+        mutation($itemId: ID!, $groupId: String!, $boardId: ID!) {
+          move_item_to_group(item_id: $itemId, group_id: $groupId) { id }
+        }
+      `;
+      await mondayAPI(mutation, { itemId: parseInt(event.pulseId), groupId: selectedGroupId, boardId: targetBoard }, token);
       return `Item moved to group ${selectedGroupId}`;
     }
 
-    // ── POST AN UPDATE ──
+    case 'set_date': {
+      if (!selectedColumnId) return 'No column — skipped';
+      const offset = parseInt(dateOffset) || 0;
+      const d      = new Date(); d.setDate(d.getDate() + offset);
+      const dateStr = d.toISOString().split('T')[0];
+      const mutation = `
+        mutation($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
+          change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) { id }
+        }
+      `;
+      await mondayAPI(mutation, {
+        boardId:  targetBoard, itemId: parseInt(event.pulseId),
+        columnId: selectedColumnId, value: JSON.stringify({ date: dateStr }),
+      }, token);
+      return `Date set to ${dateStr}`;
+    }
+
     case 'create_update': {
-      const text = resolveTokens(message) || `Update from FlowMap automation`;
+      const text = msg || `Update from FlowMap automation`;
       const mutation = `
         mutation($itemId: ID!, $body: String!) {
           create_update(item_id: $itemId, body: $body) { id }
         }
       `;
-      await mondayAPI(mutation, {
-        itemId: parseInt(event.pulseId),
-        body:   text,
-      }, token);
+      await mondayAPI(mutation, { itemId: parseInt(event.pulseId), body: text }, token);
       return `Update posted`;
     }
 
-    // ── CREATE SUBITEM ──
-    case 'create_subitem': {
-      const name = resolveTokens(itemName) || `Subitem of ${event.pulseName}`;
-      const mutation = `
-        mutation($parentId: ID!, $itemName: String!) {
-          create_subitem(parent_item_id: $parentId, item_name: $itemName) { id name }
-        }
-      `;
-      const result = await mondayAPI(mutation, {
-        parentId: parseInt(event.pulseId),
-        itemName: name,
-      }, token);
-      return `Subitem created: "${result?.data?.create_subitem?.name}"`;
-    }
-
-    // ── ARCHIVE ITEM ──
     case 'archive_item': {
       const mutation = `
-        mutation($itemId: ID!) {
-          archive_item(item_id: $itemId) { id }
-        }
+        mutation($itemId: ID!) { archive_item(item_id: $itemId) { id } }
       `;
       await mondayAPI(mutation, { itemId: parseInt(event.pulseId) }, token);
       return `Item archived`;
     }
 
-    // ── DUPLICATE ITEM ──
-    case 'duplicate_item': {
+    case 'create_subitem': {
       const mutation = `
-        mutation($boardId: ID!, $itemId: ID!, $withUpdates: Boolean) {
-          duplicate_item(board_id: $boardId, item_id: $itemId, with_updates: $withUpdates) { id name }
+        mutation($parentId: ID!, $itemName: String!) {
+          create_subitem(parent_item_id: $parentId, item_name: $itemName) { id }
         }
       `;
-      const result = await mondayAPI(mutation, {
+      await mondayAPI(mutation, {
+        parentId: parseInt(event.pulseId),
+        itemName: iName || `Subitem from FlowMap`,
+      }, token);
+      return `Subitem created`;
+    }
+
+    case 'duplicate_item': {
+      const mutation = `
+        mutation($boardId: ID!, $itemId: ID!, $withPinned: Boolean) {
+          duplicate_item(board_id: $boardId, item_id: $itemId, with_pinned_items: $withPinned) { id }
+        }
+      `;
+      await mondayAPI(mutation, {
         boardId:     targetBoard,
         itemId:      parseInt(event.pulseId),
-        withUpdates: false,
+        withPinned:  false,
       }, token);
-      return `Item duplicated: "${result?.data?.duplicate_item?.name}"`;
+      return `Item duplicated`;
     }
 
     default:
-      return `Action "${templateId}" not yet implemented`;
+      return `Action "${templateId}" not implemented`;
   }
 }
 
-// ─────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────
-
-// Core monday.com GraphQL caller
-async function mondayAPI(query, variables, token) {
-  const response = await axios.post(
-    'https://api.monday.com/v2',
-    { query, variables },
-    {
-      headers: {
-        Authorization:  token,
-        'Content-Type': 'application/json',
-        'API-Version':  '2024-01',
-      },
-    }
-  );
-  if (response.data.errors) {
-    throw new Error(response.data.errors.map(e => e.message).join(', '));
-  }
-  return response.data;
-}
-
-// Get a specific column value for an item
-async function getItemColumnValue(itemId, columnId, token) {
-  const query = `
-    query($itemId: [ID!], $columnId: [String!]) {
-      items(ids: $itemId) {
-        column_values(ids: $columnId) {
-          id text value
-          ... on PeopleValue { persons_and_teams { id kind } }
-        }
-        group { id title }
-      }
-    }
-  `;
-  const data = await mondayAPI(query, {
-    itemId:   [parseInt(itemId)],
-    columnId: [columnId],
-  }, token);
-  return data?.data?.items?.[0]?.column_values?.[0];
-}
-
-// Get item details
-async function getItem(itemId, token) {
-  const query = `
-    query($itemId: [ID!]) {
-      items(ids: $itemId) { id name group { id title } board { id name } }
-    }
-  `;
-  const data = await mondayAPI(query, { itemId: [parseInt(itemId)] }, token);
-  return data?.data?.items?.[0];
-}
-
-// Map FlowMap trigger templateId → monday webhook event type
-function mapTriggerToWebhookEvent(templateId) {
-  const map = {
-    status_changed:  'change_status_column_value',
-    item_created:    'create_item',
-    column_changes:  'change_column_value',
-    item_assigned:   'change_column_value',
-    button_clicked:  'change_column_value',
-    item_moved:      'move_item_to_group',
-    subitem_created: 'create_subitem',
-    date_arrives:    'change_column_value',
-    dependency_met:  'change_column_value',
-  };
-  return map[templateId] || null;
-}
-
-// Resolve date offset strings like "today", "today+3", "today-1"
-function resolveDate(offset) {
-  const today = new Date();
-  if (!offset || offset === 'today') return today.toISOString().split('T')[0];
-  const match = offset.match(/today([+-]\d+)/);
-  if (match) {
-    const days = parseInt(match[1]);
-    today.setDate(today.getDate() + days);
-  }
-  return today.toISOString().split('T')[0];
-}
-
-// Add a log entry for a flow
-function addLog(flowId, status, message) {
-  if (!execLogs.has(flowId)) execLogs.set(flowId, []);
-  const logs = execLogs.get(flowId);
-  logs.push({ timestamp: new Date().toISOString(), status, message });
-  if (logs.length > 100) logs.shift(); // keep last 100
-}
-
-// ─────────────────────────────────────────────
-// START SERVER
-// ─────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`\n🗺️  FlowMap Backend running on http://localhost:${PORT}`);
-  console.log(`   Health:    http://localhost:${PORT}/health`);
-  console.log(`   OAuth:     http://localhost:${PORT}/auth/monday`);
-  console.log(`   Webhook:   http://localhost:${PORT}/webhook/monday/:flowId\n`);
+  console.log(`FlowMap backend running on port ${PORT}`);
+  console.log(`Supabase: ${process.env.SUPABASE_URL ? '✅ Connected' : '❌ Not configured'}`);
+  console.log(`Mailjet:  ${process.env.MAILJET_API_KEY ? '✅ Configured' : '⚠️ Not configured'}`);
+  console.log(`Anthropic:${process.env.ANTHROPIC_API_KEY ? '✅ Configured' : '⚠️ Not configured'}`);
 });

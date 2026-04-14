@@ -24,6 +24,7 @@ export default function App() {
   const setBoardsLoading   = useStore(s => s.setBoardsLoading);
   const setWorkspaces      = useStore(s => s.setWorkspaces);
   const setWorkspaceUsers  = useStore(s => s.setWorkspaceUsers);
+  const fetchFlows         = useStore(s => s.fetchFlows);
   const nodes          = useStore(s => s.nodes);
   const edges          = useStore(s => s.edges);
   const currentFlow    = useStore(s => s.currentFlowName);
@@ -67,6 +68,8 @@ export default function App() {
         const boards = await getBoards(token);
         setBoards(boards);
         setBoardsLoading(false);
+        // Load flows from Supabase
+        fetchFlows();
         toast.success(`Welcome, ${user.name}! ${boards.length} boards across ${workspaces.length} workspaces loaded.`);
       } catch (err) {
         console.error(err);
