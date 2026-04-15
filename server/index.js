@@ -77,7 +77,7 @@ app.get('/auth/callback', async (req, res) => {
       redirect_uri:  process.env.REDIRECT_URI,
     });
     const { access_token } = response.data;
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
     res.redirect(`${frontendUrl}?token=${access_token}`);
   } catch (err) {
     console.error('OAuth error:', err.response?.data || err.message);
