@@ -485,6 +485,8 @@ function TemplateFields({ data, updateNodeData, color, t }) {
     });
   };
 
+  const fetchBoardDetails = useStore(s => s.fetchBoardDetails);
+
   const handleBoardChange = boardId => {
     const board = boardOpts.find(b => b.value === boardId);
     updateNodeData(data.id, {
@@ -496,6 +498,8 @@ function TemplateFields({ data, updateNodeData, color, t }) {
       groupName:        '',
       value:            '',
     });
+    // Fetch columns + groups for selected board
+    if (boardId) fetchBoardDetails(boardId);
   };
 
   const handleColumnChange = colId => {

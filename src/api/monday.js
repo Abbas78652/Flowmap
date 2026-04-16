@@ -50,15 +50,17 @@ export async function getWorkspaces(token) {
 }
 
 // ─────────────────────────────────────────────
-// GET ALL BOARDS — fetch all pages, no filtering by board_kind
-// monday.com API: max 500 per request, page-based pagination
+// GET ALL BOARDS — lightweight fetch (no columns/groups)
+// Columns/groups fetched separately when board is selected
+// Small batches to avoid monday.com complexity limits
 // ─────────────────────────────────────────────
 export async function getBoards(token) {
   let allBoards = [];
   let page      = 1;
-  const limit   = 500; // max allowed by monday.com
+  const limit   = 50; // Small batches to stay under complexity limit
 
   while (true) {
+    // Lightweight query — NO columns or groups (too heavy for 700+ boards)
     const query = `
       query GetBoards($limit: Int!, $page: Int!) {
         boards(limit: $limit, page: $page, order_by: created_at) {
@@ -66,8 +68,6 @@ export async function getBoards(token) {
           name
           state
           board_kind
-          columns { id title type settings_str }
-          groups  { id title color }
           workspace { id name }
         }
       }
@@ -84,29 +84,39 @@ export async function getBoards(token) {
 
     allBoards = [...allBoards, ...batch];
 
-    // If fewer results than limit returned, we've reached the last page
     if (batch.length < limit) break;
-    // Safety cap — 20 pages × 500 = 10,000 boards max
-    if (page >= 20) break;
+    if (page >= 30) break; // Safety cap — 30 × 50 = 1500 boards max
     page++;
   }
 
-  // Filter rules:
-  // ✅ Keep: active boards with a workspace
-  // ❌ Remove: archived, deleted
-  // ❌ Remove: subitem boards (board_kind = 'sub_items_board')
-  // ❌ Remove: boards named "Subitems of X"
-  // ❌ Remove: share boards (monday.com workflow/template boards)
-  // ❌ Remove: boards with no name
+  const seen = new Set();
   return allBoards.filter(b => {
-    if (!b.name || b.name.trim() === '')         return false;
-    if (b.state !== 'active')                    return false;
-    if (b.board_kind === 'sub_items_board')       return false;
-    if (b.board_kind === 'share')                 return false;
-    if (b.name.startsWith('Subitems of '))        return false;
-    if (!b.workspace)                             return false;
+    if (!b.name || b.name.trim() === '')    return false;
+    if (b.state !== 'active')               return false;
+    if (b.board_kind === 'sub_items_board') return false;
+    if (b.name.startsWith('Subitems of '))  return false;
+    if (!b.workspace)                       return false;
+    if (seen.has(b.id))                     return false;
+    seen.add(b.id);
     return true;
   });
+}
+
+// ─────────────────────────────────────────────
+// GET BOARD COLUMNS + GROUPS — called when user selects a board
+// ─────────────────────────────────────────────
+export async function getBoardDetails(boardId, token) {
+  const query = `
+    query GetBoard($boardId: [ID!]) {
+      boards(ids: $boardId) {
+        id name
+        columns { id title type settings_str }
+        groups  { id title color }
+      }
+    }
+  `;
+  const data = await mondayQuery(query, { boardId: [boardId] }, token);
+  return data.boards?.[0] || null;
 }
 
 // ─────────────────────────────────────────────
@@ -124,22 +134,7 @@ export async function getWorkspaceUsers(token) {
   return data.users || [];
 }
 
-// ─────────────────────────────────────────────
-// GET BOARD DETAILS
-// ─────────────────────────────────────────────
-export async function getBoardDetails(boardId, token) {
-  const query = `
-    query GetBoard($boardId: [ID!]) {
-      boards(ids: $boardId) {
-        id name
-        columns { id title type settings_str }
-        groups { id title color }
-      }
-    }
-  `;
-  const data = await mondayQuery(query, { boardId: [boardId] }, token);
-  return data.boards?.[0] || null;
-}
+
 
 // ─────────────────────────────────────────────
 // GET CONNECTED BOARDS

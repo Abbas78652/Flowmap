@@ -58,10 +58,51 @@ export const useStore = create((set, get) => ({
   setWorkspaceUsers: users => set({ workspaceUsers: users }),
 
   // ── Boards ──
-  boards:          [],
-  boardsLoading:   false,
-  setBoards:       boards => set({ boards }),
+  boards:           [],
+  boardsLoading:    false,
+  boardDetailsCache: {}, // boardId -> { columns, groups }
+  setBoards:        boards => set({ boards }),
   setBoardsLoading: v => set({ boardsLoading: v }),
+
+  // Fetch columns + groups for a specific board (called when user selects it)
+  fetchBoardDetails: async (boardId) => {
+    const { boardDetailsCache, token, boards } = get();
+    if (!boardId || !token) return;
+    if (boardDetailsCache[boardId]) return; // already cached
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/monday`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          query: `query GetBoard($boardId: [ID!]) {
+            boards(ids: $boardId) {
+              id name
+              columns { id title type settings_str }
+              groups  { id title color }
+            }
+          }`,
+          variables: { boardId: [boardId] },
+        }),
+      });
+      const data = await res.json();
+      const boardData = data?.data?.boards?.[0];
+      if (!boardData) return;
+
+      // Merge columns/groups into the boards array
+      const updatedBoards = boards.map(b =>
+        b.id === boardId
+          ? { ...b, columns: boardData.columns, groups: boardData.groups }
+          : b
+      );
+      set({
+        boards: updatedBoards,
+        boardDetailsCache: { ...get().boardDetailsCache, [boardId]: true },
+      });
+    } catch (err) {
+      console.error('Failed to fetch board details:', err);
+    }
+  },
 
   // ── Flow canvas ──
   nodes:           savedDraft?.nodes || [],
