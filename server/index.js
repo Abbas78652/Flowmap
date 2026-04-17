@@ -297,33 +297,7 @@ app.post('/api/flows/deactivate', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
-// WEBHOOK RECEIVER — executes flow when monday fires
-// ─────────────────────────────────────────────
-app.post('/webhook/:flowId', async (req, res) => {
-  // monday.com challenge verification
-  if (req.body?.challenge) return res.json({ challenge: req.body.challenge });
-
-  res.json({ received: true });
-
-  const { flowId } = req.params;
-  const event      = req.body?.event || req.body;
-
-  try {
-    // Load flow from Supabase
-    const { data: flow, error } = await supabase.from('flows').select('*').eq('id', flowId).single();
-    if (error || !flow || !flow.active) return;
-
-    // Get stored token from subscriptions or use a cached approach
-    // For now get token from monday's event context
-    const token = await getTokenForAccount(flow.account_id);
-    if (!token) { console.error('No token found for account', flow.account_id); return; }
-
-    await executeFlow({ flow, event, token });
-  } catch (err) {
-    console.error('Webhook execution error:', err.message);
-  }
-});
+// Webhook receiver moved to workflow block section above
 
 // ─────────────────────────────────────────────
 // EXECUTION LOGS
@@ -347,46 +321,102 @@ app.get('/api/flows/:flowId/logs', async (req, res) => {
 // WORKFLOW BLOCK ENDPOINTS (for "something" fix)
 // ─────────────────────────────────────────────
 
-// monday calls this when user adds our automation block to a workflow
-app.post('/workflow/subscribe', async (req, res) => {
-  const { payload } = req.body;
-  const { webhookUrl, subscriptionId, inputFields, inboundFieldValues } = payload || {};
+// ─────────────────────────────────────────────
+// WORKFLOW AUTOMATION BLOCK ENDPOINTS
+// These replace bare webhooks — shows real values in monday UI
+// ─────────────────────────────────────────────
 
+// monday calls this when user adds our trigger block to a workflow
+// payload.inputFields contains the ACTUAL selected values (board, column, status)
+app.post('/workflow/subscribe', async (req, res) => {
   try {
-    const fields = inputFields || inboundFieldValues || {};
-    await supabase.from('subscriptions').upsert({
-      id:          String(subscriptionId),
-      flow_id:     null,
-      webhook_url: webhookUrl,
+    const { payload } = req.body;
+    if (!payload) return res.status(400).json({ error: 'No payload' });
+
+    const {
+      webhookUrl,
+      subscriptionId,
+      inputFields    = {},
+      inboundFieldValues = {},
+    } = payload;
+
+    const fields = { ...inboundFieldValues, ...inputFields };
+
+    // Extract the Authorization header JWT — contains the monday token
+    const authHeader = req.headers['authorization'] || '';
+    // Store subscription in Supabase for persistence across Render restarts
+    const { error } = await supabase.from('subscriptions').upsert({
+      id:           String(subscriptionId),
+      flow_id:      null,
+      webhook_url:  webhookUrl,
       input_fields: fields,
-      board_id:    fields.boardId || fields.board_id || null,
+      board_id:     String(fields.boardId || fields.board_id || ''),
+      token:        authHeader.replace('Bearer ', ''),
     }, { onConflict: 'id' });
 
-    console.log(`Workflow block subscribed: ${subscriptionId}`, fields);
+    if (error) {
+      console.error('Subscribe DB error:', error.message);
+      // Still return success — don't block monday
+    }
+
+    console.log(`✅ Workflow subscribed: ${subscriptionId}`, JSON.stringify(fields));
     res.status(200).json({ webhookId: subscriptionId });
   } catch (err) {
     console.error('Subscribe error:', err.message);
-    res.status(500).json({ error: err.message });
+    // Return 200 even on error — monday retries on non-200
+    res.status(200).json({ webhookId: req.body?.payload?.subscriptionId });
   }
 });
 
-// monday calls this when user removes our automation block
+// monday calls this when user removes/disables our trigger block
 app.post('/workflow/unsubscribe', async (req, res) => {
-  const { payload } = req.body;
-  const { webhookId } = payload || {};
   try {
-    await supabase.from('subscriptions').delete().eq('id', String(webhookId));
-    console.log(`Workflow block unsubscribed: ${webhookId}`);
+    const { payload } = req.body;
+    const webhookId = payload?.webhookId;
+    if (webhookId) {
+      await supabase.from('subscriptions').delete().eq('id', String(webhookId));
+      console.log(`✅ Workflow unsubscribed: ${webhookId}`);
+    }
     res.status(200).json({});
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Unsubscribe error:', err.message);
+    res.status(200).json({});
   }
 });
 
-// monday calls this to execute our action block
+// monday calls this to execute our ACTION block
 app.post('/workflow/execute', async (req, res) => {
-  console.log('Workflow execute:', JSON.stringify(req.body));
-  res.status(200).json({ success: true });
+  try {
+    const { payload } = req.body;
+    console.log('Workflow execute:', JSON.stringify(payload));
+    // Future: implement action block execution here
+    res.status(200).json({ success: true });
+  } catch (err) {
+    res.status(200).json({ success: true });
+  }
+});
+
+// monday fires this when a workflow trigger condition is met
+// Our subscription's webhookUrl gets called by monday directly
+// This endpoint handles status changes from our OWN registered webhooks
+app.post('/webhook/:flowId', async (req, res) => {
+  if (req.body?.challenge) return res.json({ challenge: req.body.challenge });
+  res.json({ received: true });
+
+  const { flowId } = req.params;
+  const event = req.body?.event || req.body;
+
+  try {
+    const { data: flow } = await supabase.from('flows').select('*').eq('id', flowId).single();
+    if (!flow || !flow.active) return;
+
+    const token = await getTokenForAccount(flow.account_id);
+    if (!token) { console.error('No token for account', flow.account_id); return; }
+
+    await executeFlow({ flow, event, token });
+  } catch (err) {
+    console.error('Webhook execution error:', err.message);
+  }
 });
 
 // ─────────────────────────────────────────────
