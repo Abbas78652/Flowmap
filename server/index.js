@@ -209,6 +209,29 @@ app.post('/api/flows/activate', async (req, res) => {
   if (!token) return res.status(401).json({ error: 'No token' });
   const { flow } = req.body;
   if (!flow) return res.status(400).json({ error: 'No flow provided' });
+// ── CLEANUP: Delete any existing webhooks before registering new ones ──
+  // This prevents duplicate webhooks when a flow is edited and re-activated
+  const existingWebhooks = flow.webhookIds || flow.webhook_ids || [];
+  if (existingWebhooks.length > 0) {
+    console.log(`🧹 Cleaning up ${existingWebhooks.length} old webhook(s) before re-activation`);
+    for (const wh of existingWebhooks) {
+      try {
+        const webhookId = wh.webhookId || wh.id;
+        if (!webhookId) continue;
+        await mondayAPI(
+          `mutation($id: ID!) { delete_webhook(id: $id) { id } }`,
+          { id: webhookId },
+          token
+        );
+        console.log(`🗑 Deleted old webhook: ${webhookId}`);
+      } catch (err) {
+        // Don't fail activation if old webhook was already deleted
+        console.warn(`Could not delete old webhook: ${err.message}`);
+      }
+    }
+  }
+  // Also clear from in-memory map
+  activeFlows.delete(flow.id);
 
   const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || `http://localhost:${PORT}`;
   const webhooks = [];
